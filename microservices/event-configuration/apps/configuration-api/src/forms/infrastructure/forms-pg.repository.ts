@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { sql, RawBuilder } from 'kysely';
 import { DatabaseService } from '../../shared/database/database.service';
 import { generateUuidV7 } from '../../shared/crypto/uuidv7';
-import { FormsRepository, FormDefinition, FormVersion, FormBinding, FormDraft, BindingInput } from '../domain/forms.repository';
+import { FormsRepository, FormDefinition, FormVersion, FormBinding, FormDraft, BindingInput } from '../domain/ports/forms-repository.port';
 
 @Injectable()
 export class FormsPgRepository implements FormsRepository {

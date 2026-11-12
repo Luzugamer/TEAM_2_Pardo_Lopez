@@ -1,38 +1,6 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CalendarDays, Check, Plus, RefreshCw, X } from "lucide-react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
-import {
-  Activity,
-  ArrowDownLeft,
-  ArrowRight,
-  CalendarDays,
-  Check,
-  ChevronDown,
-  CircleHelp,
-  ClipboardList,
-  Clock3,
-  ExternalLink,
-  FileCheck2,
-  Layers3,
-  MapPin,
-  Menu,
-  MoreHorizontal,
-  Plus,
-  RefreshCw,
-  Search,
-  Settings2,
-  Sparkles,
-  Users,
-  X,
-} from "lucide-react";
-import {
-  displayDate,
   items,
   createEventsTransport,
   type EventsRequest,
@@ -41,80 +9,36 @@ import {
   type RecordData,
 } from "./api";
 import type { ModuleContext } from "../../platform/microfrontends/contracts";
-import { Alert, Card } from "../../design-system";
-import { PageHeading } from "../../design-system";
+import { Alert, Card, PageHeading } from "../../design-system";
 import "./events.css";
 import { translateEvents as tr } from "../../core/events-i18n";
 import { useI18n } from "../../core/i18n";
+import { readSession } from "../../core/session";
 import { eventPermissions } from "./capabilities";
 import { FormsPanel } from "./forms/FormsPanel";
 import {
-  FormDialog,
   Badge,
   Empty,
+  FormDialog,
   Panel,
-  Stat,
-  Step,
-  Detail,
-  EventList,
-  ResourceList,
-  type Field,
   type Dialog,
+  type Field,
 } from "./components";
-
-type Section =
-  | "overview"
-  | "events"
-  | "agenda"
-  | "venues"
-  | "speakers"
-  | "forms"
-  | "publication"
-  | "activity";
-
-const nav: { id: Section; label: string; icon: typeof Activity }[] = [
-  { id: "overview", label: "Resumen", icon: Layers3 },
-  { id: "events", label: "Eventos", icon: CalendarDays },
-  { id: "agenda", label: "Agenda y programas", icon: ClipboardList },
-  { id: "venues", label: "Sedes y salas", icon: MapPin },
-  { id: "speakers", label: "Ponentes", icon: Users },
-  { id: "forms", label: "Formularios", icon: ClipboardList },
-  { id: "publication", label: "Publicación", icon: FileCheck2 },
-  { id: "activity", label: "Actividad", icon: Activity },
-];
-
-const text = (name: string, label: string, required = false): Field => ({
-  name,
-  label,
-  required,
-});
-
-const date = (name: string, label: string, required = true): Field => ({
-  name,
-  label,
-  type: "datetime-local",
-  required,
-});
-
-const slugify = (value: string) =>
-  value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-
-const clean = (body: RecordData) =>
-  Object.fromEntries(
-    Object.entries(body).filter(
-      ([, value]) => value !== "" && value !== undefined,
-    ),
-  );
-
-const option = (row: RecordData, label = "") => ({
-  value: row.id ?? "",
-  label,
-});
+import {
+  NAV_ITEMS,
+  cleanPayload,
+  dateField,
+  selectOption,
+  textField,
+  type Section,
+} from "./sections/shared";
+import { OverviewSection } from "./sections/OverviewSection";
+import { EventsSection } from "./sections/EventsSection";
+import { VenuesSection } from "./sections/VenuesSection";
+import { SpeakersSection } from "./sections/SpeakersSection";
+import { AgendaSection } from "./sections/AgendaSection";
+import { PublicationSection } from "./sections/PublicationSection";
+import { ActivitySection } from "./sections/ActivitySection";
 
 export function EventsModule({
   context,
@@ -124,34 +48,30 @@ export function EventsModule({
   transport?: EventsTransport;
 }) {
   useI18n(); // Subscribe to the shell locale.
-  const demo =
-    !providedTransport &&
-    import.meta.env.DEV &&
-    import.meta.env.VITE_EVENTS_DEMO === "true";
-  const enabled = demo || Boolean(providedTransport);
+  const accessToken = readSession()?.access_token ?? "";
+  const enabled = Boolean(
+    providedTransport || (accessToken && context.tenantId),
+  );
   const [section, setSection] = useState<Section>("overview");
-  const [actor, setActor] = useState("org-a-manager");
   const transport = useMemo(
     () =>
       providedTransport ??
       createEventsTransport({
         baseUrl: context.apiBaseUrl,
-        mode: demo ? "demo" : "unavailable",
+        mode: accessToken && context.tenantId ? "authenticated" : "unavailable",
         development: import.meta.env.DEV,
-        actor,
+        accessToken,
+        tenantId: context.tenantId,
       }),
-    [providedTransport, context.apiBaseUrl, demo, actor],
+    [providedTransport, context.apiBaseUrl, accessToken, context.tenantId],
   );
   const request: EventsRequest = useCallback(
-    (_actor: string, path: string, options?: EventsRequestOptions) =>
+    (path: string, options?: EventsRequestOptions) =>
       transport.request(path, options),
     [transport],
   );
-  const permissions = eventPermissions(
-    context.capabilities,
-    demo ? actor : undefined,
-  );
-  const currentContext = `${context.tenantId}:${actor}:${[...context.capabilities].sort().join(",")}`;
+  const permissions = eventPermissions(context.capabilities);
+  const currentContext = `${context.tenantId}:${[...context.capabilities].sort().join(",")}`;
   const contextRef = useRef(currentContext);
   contextRef.current = currentContext;
 
@@ -181,11 +101,11 @@ export function EventsModule({
   selectionRef.current = selectedId;
 
   const selected = events.find((event) => event.id === selectedId);
-  const currentNav = nav.find((item) => item.id === section)!;
+  const currentNav = NAV_ITEMS.find((item) => item.id === section)!;
 
   useEffect(() => {
     const segment = context.route?.split("/")[2];
-    const target = nav.find((item) => item.id === segment);
+    const target = NAV_ITEMS.find((item) => item.id === segment);
     setSection(target?.id ?? "overview");
   }, [context.route]);
 
@@ -201,7 +121,6 @@ export function EventsModule({
   const loadEvents = useCallback(
     async (cursor?: string) => {
       const data = await request(
-        actor,
         `/events?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
       );
       if (contextRef.current !== currentContext) return;
@@ -217,7 +136,7 @@ export function EventsModule({
       );
       setNextEventCursor(data?.page_info?.next_cursor ?? null);
     },
-    [actor, request, currentContext],
+    [request, currentContext],
   );
 
   const refresh = useCallback(async () => {
@@ -232,8 +151,8 @@ export function EventsModule({
       setConnection("online");
       if (permissions.write) {
         const [venueData, speakerData] = await Promise.all([
-          loadAll(request, actor, "/venues"),
-          loadAll(request, actor, "/speakers"),
+          loadAll(request, "/venues"),
+          loadAll(request, "/speakers"),
         ]);
         if (contextRef.current !== currentContext) return;
         setVenues(venueData);
@@ -249,7 +168,6 @@ export function EventsModule({
       setLoading(false);
     }
   }, [
-    actor,
     loadEvents,
     request,
     enabled,
@@ -280,8 +198,8 @@ export function EventsModule({
     }
     try {
       const [p, s] = await Promise.all([
-        loadAll(request, actor, `/events/${selectedId}/programs`),
-        loadAll(request, actor, `/events/${selectedId}/sessions`),
+        loadAll(request, `/events/${selectedId}/programs`),
+        loadAll(request, `/events/${selectedId}/sessions`),
       ]);
       if (
         contextRef.current !== currentContext ||
@@ -294,7 +212,7 @@ export function EventsModule({
     } catch (error) {
       showError(error);
     }
-  }, [actor, selectedId, request, currentContext, permissions.write]);
+  }, [selectedId, request, currentContext, permissions.write]);
 
   useEffect(() => {
     void refreshAgenda();
@@ -317,7 +235,7 @@ export function EventsModule({
     ) {
       throw new Error(tr("No tienes permisos para esta operación."));
     }
-    const result = await request(actor, path, { method, body, revision });
+    const result = await request(path, { method, body, revision });
     if (contextRef.current !== currentContext) return result;
     if (method !== "GET") setOutput(null);
     setNotice({ type: "success", text: success });
@@ -327,7 +245,7 @@ export function EventsModule({
 
   const inspect = async (title: string, path: string) => {
     try {
-      const data = await request(actor, path);
+      const data = await request(path);
       if (contextRef.current === currentContext) {
         setOutput({ title, data });
       }
@@ -351,7 +269,7 @@ export function EventsModule({
       fields,
       initial,
       submit: async (body) => {
-        const result = await run(path, method, clean(body), revision);
+        const result = await run(path, method, cleanPayload(body), revision);
         if (result && path.includes("validations")) {
           setOutput({ title, data: result });
         }
@@ -381,13 +299,13 @@ export function EventsModule({
         "Comienza con los datos principales. El evento se guardará como borrador.",
       ),
       fields: [
-        text("title", tr("Nombre del evento"), true),
-        text("slug", tr("Identificador (slug)"), true),
-        text("site_id", tr("ID del sitio (UUID)"), true),
-        text("kind", tr("Tipo de evento"), true),
-        date("starts_at", tr("Fecha de inicio")),
-        date("ends_at", tr("Fecha de fin")),
-        text("timezone", tr("Zona horaria"), true),
+        textField("title", tr("Nombre del evento"), true),
+        textField("slug", tr("Identificador (slug)"), true),
+        textField("site_id", tr("ID del sitio (UUID)"), true),
+        textField("kind", tr("Tipo de evento"), true),
+        dateField("starts_at", tr("Fecha de inicio")),
+        dateField("ends_at", tr("Fecha de fin")),
+        textField("timezone", tr("Zona horaria"), true),
         { name: "description", label: tr("Descripción"), type: "textarea" },
       ],
       initial: { kind: "conference", timezone: "America/Lima" },
@@ -395,11 +313,11 @@ export function EventsModule({
         const result = await run(
           "/events",
           "POST",
-          clean(body),
+          cleanPayload(body),
           undefined,
           tr("Evento creado correctamente."),
         );
-        setSelectedId(result.id ?? "");
+        setSelectedId(result?.id ?? "");
         setSection("events");
       },
     });
@@ -409,12 +327,12 @@ export function EventsModule({
     setDialog({
       title: tr("Editar evento"),
       fields: [
-        text("title", tr("Nombre"), true),
-        text("slug", tr("Identificador"), true),
-        text("kind", tr("Tipo"), true),
-        date("starts_at", tr("Fecha de inicio")),
-        date("ends_at", tr("Fecha de fin")),
-        text("timezone", tr("Zona horaria"), true),
+        textField("title", tr("Nombre"), true),
+        textField("slug", tr("Identificador"), true),
+        textField("kind", tr("Tipo"), true),
+        dateField("starts_at", tr("Fecha de inicio")),
+        dateField("ends_at", tr("Fecha de fin")),
+        textField("timezone", tr("Zona horaria"), true),
         { name: "description", label: tr("Descripción"), type: "textarea" },
       ],
       initial: selected,
@@ -422,7 +340,7 @@ export function EventsModule({
         await run(
           selectedPath,
           "PATCH",
-          clean(body),
+          cleanPayload(body),
           selected!.revision_number,
         );
       },
@@ -444,17 +362,17 @@ export function EventsModule({
             { value: "room", label: tr("Sala") },
           ],
         },
-        text("name", tr("Nombre"), true),
+        textField("name", tr("Nombre"), true),
         {
           name: "parent_venue_id",
           label: tr("Sede principal (para salas)"),
           type: "select",
           options: venues
             .filter((v) => v.kind === "venue")
-            .map((v) => option(v, v.name)),
+            .map((v) => selectOption(v, v.name)),
         },
-        text("address", tr("Dirección"), true),
-        text("locality", tr("Ciudad")),
+        textField("address", tr("Dirección"), true),
+        textField("locality", tr("Ciudad")),
         { name: "capacity", label: tr("Capacidad"), type: "number" },
         {
           name: "exclusive",
@@ -466,8 +384,8 @@ export function EventsModule({
       submit: async (body) => {
         const { address, locality, ...rest } = body;
         await run("/venues", "POST", {
-          ...clean(rest),
-          location: clean({ address, locality }),
+          ...cleanPayload(rest),
+          location: cleanPayload({ address, locality }),
         });
       },
     });
@@ -479,9 +397,9 @@ export function EventsModule({
         "El consentimiento público se registra por separado con el aviso vigente.",
       ),
       fields: [
-        text("display_name", tr("Nombre completo"), true),
+        textField("display_name", tr("Nombre completo"), true),
         { name: "bio", label: tr("Biografía"), type: "textarea" },
-        text("media_ref", tr("Referencia multimedia")),
+        textField("media_ref", tr("Referencia multimedia")),
         {
           name: "exclusive",
           label: tr("Ponente de disponibilidad exclusiva"),
@@ -491,7 +409,7 @@ export function EventsModule({
       initial: {},
       submit: async (body) => {
         await run("/speakers", "POST", {
-          ...clean(body),
+          ...cleanPayload(body),
           public_consent: false,
         });
       },
@@ -503,15 +421,15 @@ export function EventsModule({
       tr("Crear programa"),
       `${selectedPath}/programs`,
       [
-        text("name", tr("Nombre"), true),
-        text("slug", tr("Identificador (slug)"), true),
+        textField("name", tr("Nombre"), true),
+        textField("slug", tr("Identificador (slug)"), true),
         {
           name: "display_order",
           label: tr("Orden"),
           type: "number",
           required: true,
         },
-        text("color", tr("Color (#RRGGBB)")),
+        textField("color", tr("Color (#RRGGBB)")),
         { name: "description", label: tr("Descripción"), type: "textarea" },
       ],
       { display_order: 0 },
@@ -526,29 +444,29 @@ export function EventsModule({
         "La sesión se crea como borrador; prográmala después para reservar recursos.",
       ),
       fields: [
-        text("title", tr("Título"), true),
+        textField("title", tr("Título"), true),
         {
           name: "program_id",
           label: tr("Programa"),
           type: "select",
           required: true,
-          options: programs.map((p) => option(p, p.name)),
+          options: programs.map((p) => selectOption(p, p.name)),
         },
         {
           name: "venue_id",
           label: tr("Sede o sala"),
           type: "select",
           required: true,
-          options: venues.map((v) => option(v, v.name)),
+          options: venues.map((v) => selectOption(v, v.name)),
         },
-        date("starts_at", tr("Inicio")),
-        date("ends_at", tr("Fin")),
+        dateField("starts_at", tr("Inicio")),
+        dateField("ends_at", tr("Fin")),
         { name: "description", label: tr("Descripción"), type: "textarea" },
         {
           name: "speaker_ids",
           label: tr("Ponentes (opcional)"),
           type: "multiselect",
-          options: speakers.map((s) => option(s, s.display_name)),
+          options: speakers.map((s) => selectOption(s, s.display_name)),
           hint: speakers.length
             ? tr("Mantén Ctrl para seleccionar varios ponentes.")
             : tr("Primero agrega ponentes en el directorio."),
@@ -556,7 +474,7 @@ export function EventsModule({
       ],
       initial: { speaker_ids: [] },
       submit: async (body) => {
-        await run(`${selectedPath}/sessions`, "POST", clean(body));
+        await run(`${selectedPath}/sessions`, "POST", cleanPayload(body));
       },
     });
   };
@@ -631,7 +549,7 @@ export function EventsModule({
         />
         <Alert tone="warning">
           {tr(
-            "Para usar los datos locales de desarrollo, habilita el modo de demostración de eventos.",
+            "No se detectó una sesión y organización activas en Nexo para acceder a eventos.",
           )}
         </Alert>
       </Card>
@@ -640,40 +558,6 @@ export function EventsModule({
 
   return (
     <div className="events-module">
-      {demo && (
-        <div className="events-context">
-          <Alert tone="warning">
-            {tr(
-              "Demostración local: la identidad, las membresías y el broker están simulados.",
-            )}{" "}
-            {tr(
-              "El actor de prueba es independiente de la organización seleccionada en el shell.",
-            )}
-          </Alert>
-          <label>
-            {tr("Actor de desarrollo")}{" "}
-            <select value={actor} onChange={(e) => setActor(e.target.value)}>
-              <option value="org-a-manager">
-                {tr("Organización A · Admin")}
-              </option>
-              <option value="org-a-reader">
-                {tr("Organización A · Lector")}
-              </option>
-              <option value="org-b-manager">
-                {tr("Organización B · Admin")}
-              </option>
-            </select>
-          </label>
-          <span role="status">
-            {connection === "online"
-              ? tr("API conectada")
-              : connection === "loading"
-                ? tr("Conectando")
-                : tr("API no disponible")}
-          </span>
-        </div>
-      )}
-
       <div className="content">
         {notice && (
           <div className={`notice ${notice.type}`} role="status">
@@ -760,482 +644,57 @@ export function EventsModule({
         </div>
 
         {section === "overview" && (
-          <>
-            <div className="hero">
-              <div className="hero-content">
-                <div className="hero-tag">
-                  <span /> {tr("ESPACIO DE TRABAJO")}
-                </div>
-                <h2>
-                  {tr("Grandes ideas merecen")}
-                  <br />
-                  <em>{tr("grandes eventos.")}</em>
-                </h2>
-                <p>
-                  {tr(
-                    "De la primera idea al último detalle, reúne todo lo que necesitas en un solo lugar.",
-                  )}
-                </p>
-                <button onClick={() => navigate("events")}>
-                  {tr("Ver mis eventos")} <ArrowRight size={16} />
-                </button>
-              </div>
-              <div className="hero-art">
-                <div className="art-orbit orbit-one" />
-                <div className="art-orbit orbit-two" />
-                <div className="art-circle" />
-                <div className="art-card">
-                  <div className="art-card-top">
-                    <span />
-                    <span />
-                    <span />
-                  </div>
-                  <div className="art-calendar">
-                    <i />
-                    <i />
-                    <i />
-                    <i />
-                    <i />
-                    <i />
-                    <i />
-                    <i />
-                    <i />
-                    <i />
-                    <i />
-                    <i />
-                  </div>
-                  <div className="art-line" />
-                  <div className="art-line short" />
-                </div>
-                <div className="art-spark">✳</div>
-                <div className="art-mini">
-                  <CalendarDays size={18} />
-                </div>
-              </div>
-              <span className="hero-index">01 / 04</span>
-            </div>
-
-            <div className="stats-grid">
-              <Stat
-                icon={<CalendarDays size={18} />}
-                label={tr("Eventos")}
-                value={events.length}
-                hint={tr("En esta organización")}
-                tone="peach"
-              />
-              <Stat
-                icon={<Clock3 size={18} />}
-                label={tr("Borradores")}
-                value={events.filter((e) => e.status === "draft").length}
-                hint={tr("Listos para trabajar")}
-                tone="lavender"
-              />
-              <Stat
-                icon={<MapPin size={18} />}
-                label={tr("Sedes y salas")}
-                value={isReader ? "—" : venues.length}
-                hint={
-                  isReader
-                    ? tr("Sin acceso de escritura")
-                    : tr("Espacios disponibles")
-                }
-                tone="green"
-              />
-              <Stat
-                icon={<Users size={18} />}
-                label={tr("Ponentes")}
-                value={isReader ? "—" : speakers.length}
-                hint={
-                  isReader
-                    ? tr("Sin acceso de escritura")
-                    : tr("Perfiles registrados")
-                }
-                tone="yellow"
-              />
-            </div>
-
-            <div className="overview-grid">
-              <Panel
-                title={tr("Eventos recientes")}
-                subtitle={tr("Tus eventos más recientes, en un vistazo.")}
-                action={
-                  <button
-                    className="link-button"
-                    onClick={() => navigate("events")}
-                  >
-                    {tr("Ver todos")} <ArrowRight size={15} />
-                  </button>
-                }
-              >
-                {events.length ? (
-                  <EventList
-                    rows={events.slice(0, 5)}
-                    select={(event) => {
-                      setSelectedId(event.id ?? "");
-                      navigate("events");
-                    }}
-                  />
-                ) : (
-                  <Empty
-                    title={tr("Todavía no hay eventos")}
-                    description={tr(
-                      "Tu próximo gran evento comienza con un primer paso.",
-                    )}
-                    action={
-                      !isReader && (
-                        <button className="text-action" onClick={createEvent}>
-                          {tr("Crear mi primer evento")}{" "}
-                          <ArrowRight size={14} />
-                        </button>
-                      )
-                    }
-                  />
-                )}
-              </Panel>
-
-              <Panel
-                title={tr("Para comenzar")}
-                subtitle={tr("Cada gran experiencia empieza aquí.")}
-                className="getting-started"
-              >
-                <Step
-                  number="01"
-                  title={tr("Crea tu evento")}
-                  detail={tr("Define el nombre, fechas y detalles.")}
-                  onClick={() => navigate("events")}
-                />
-                <Step
-                  number="02"
-                  title={tr("Prepara los espacios")}
-                  detail={tr("Añade sedes, salas y ponentes.")}
-                  onClick={() => navigate("venues")}
-                />
-                <Step
-                  number="03"
-                  title={tr("Diseña tu agenda")}
-                  detail={tr("Organiza los programas y sesiones.")}
-                  onClick={() => navigate("agenda")}
-                />
-              </Panel>
-            </div>
-          </>
+          <OverviewSection
+            events={events}
+            venuesCount={venues.length}
+            speakersCount={speakers.length}
+            isReader={isReader}
+            navigate={navigate}
+            onSelectEvent={setSelectedId}
+            onCreateEvent={createEvent}
+          />
         )}
 
         {section === "events" && (
-          <>
-            <div className="section-tools">
-              <div className="search">
-                <Search size={17} />
-                <input
-                  placeholder={tr("Buscar eventos por nombre o estado...")}
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-              </div>
-              <span className="result-count">
-                {filtered.length} {tr("eventos")}
-              </span>
-            </div>
-
-            <Panel
-              title={tr("Todos los eventos")}
-              subtitle={tr("Selecciona un evento para ver sus detalles.")}
-            >
-              <EventList
-                rows={filtered}
-                select={(e) => setSelectedId(e.id ?? "")}
-                selectedId={selectedId}
-              />
-              {!filtered.length && (
-                <Empty
-                  title={tr("No encontramos eventos")}
-                  description={tr("Crea un evento o prueba con otra búsqueda.")}
-                />
-              )}
-              {nextEventCursor && (
-                <div className="load-more">
-                  <button
-                    className="button secondary"
-                    onClick={() =>
-                      void loadEvents(nextEventCursor).catch(showError)
-                    }
-                  >
-                    {tr("Cargar más")}
-                  </button>
-                </div>
-              )}
-            </Panel>
-
-            {selected && (
-              <Panel
-                title={selected.title ?? ""}
-                subtitle={`${tr("Revisión")} ${selected.revision_number} · ${selected.slug}`}
-                action={<Badge status={selected.status} />}
-              >
-                <div className="detail-grid">
-                  <Detail
-                    label={tr("INICIO")}
-                    value={displayDate(selected.starts_at)}
-                  />
-                  <Detail
-                    label={tr("FINALIZACIÓN")}
-                    value={displayDate(selected.ends_at)}
-                  />
-                  <Detail
-                    label={tr("ZONA HORARIA")}
-                    value={selected.timezone}
-                  />
-                  <Detail label={tr("TIPO")} value={selected.kind} />
-                </div>
-                <p className="detail-description">
-                  {selected.description ||
-                    tr("Este evento aún no tiene descripción.")}
-                </p>
-                <div className="button-row">
-                  {!isReader && (
-                    <>
-                      <button className="button secondary" onClick={editEvent}>
-                        {tr("Editar evento")}
-                      </button>
-                      <button
-                        className="button secondary"
-                        onClick={() =>
-                          command(
-                            tr("Duplicar evento"),
-                            `${selectedPath}/duplications`,
-                            [
-                              text("title", tr("Nuevo nombre")),
-                              text("slug", tr("Nuevo identificador"), true),
-                              text("site_id", tr("ID del sitio"), true),
-                              date("starts_at", tr("Inicio")),
-                              date("ends_at", tr("Fin")),
-                            ],
-                            {
-                              title: `${selected.title} (copia)`,
-                              slug: `${slugify(selected.slug ?? "")}-copia`,
-                              site_id: selected.site_id,
-                              starts_at: selected.starts_at,
-                              ends_at: selected.ends_at,
-                            },
-                          )
-                        }
-                      >
-                        {tr("Duplicar")}
-                      </button>
-                    </>
-                  )}
-                  {canPublish && (
-                    <>
-                      <button
-                        className="button secondary"
-                        onClick={() =>
-                          command(
-                            tr("Cerrar inscripciones"),
-                            `${selectedPath}/closures`,
-                            [
-                              text("reason", tr("Motivo"), true),
-                              date("effective_at", tr("Fecha efectiva")),
-                            ],
-                            { effective_at: new Date().toISOString() },
-                            selected.revision_number,
-                          )
-                        }
-                      >
-                        {tr("Cerrar")}
-                      </button>
-                      <button
-                        className="button secondary"
-                        onClick={() =>
-                          command(
-                            tr("Cancelar evento"),
-                            `${selectedPath}/cancellations`,
-                            [
-                              text("reason", tr("Motivo"), true),
-                              date("effective_at", tr("Fecha efectiva")),
-                            ],
-                            { effective_at: new Date().toISOString() },
-                            selected.revision_number,
-                          )
-                        }
-                      >
-                        {tr("Cancelar")}
-                      </button>
-                    </>
-                  )}
-                  {!isReader && (
-                    <>
-                      <button
-                        className="button secondary"
-                        onClick={() => {
-                          if (window.confirm(tr("¿Archivar este evento?"))) {
-                            void run(
-                              `${selectedPath}/archives`,
-                              "POST",
-                              {},
-                              selected.revision_number,
-                            ).catch(showError);
-                          }
-                        }}
-                      >
-                        {tr("Archivar")}
-                      </button>
-                    </>
-                  )}
-                  <button
-                    className="button secondary"
-                    onClick={() => navigate("agenda")}
-                  >
-                    {tr("Ver agenda")} <ArrowRight size={15} />
-                  </button>
-                </div>
-              </Panel>
-            )}
-          </>
+          <EventsSection
+            query={query}
+            onQueryChange={setQuery}
+            filtered={filtered}
+            selected={selected}
+            selectedId={selectedId}
+            selectedPath={selectedPath}
+            nextEventCursor={nextEventCursor}
+            isReader={isReader}
+            canPublish={canPublish}
+            onSelectEvent={setSelectedId}
+            onLoadMore={loadEvents}
+            onEditEvent={editEvent}
+            command={command}
+            run={run}
+            showError={showError}
+            navigate={navigate}
+          />
         )}
 
         {section === "venues" && (
-          <Panel
-            title={tr("Espacios disponibles")}
-            subtitle={tr("Sedes y salas de tu organización.")}
-            action={
-              <span className="count-pill">
-                {venues.length} {tr("espacios")}
-              </span>
-            }
-          >
-            <ResourceList
-              rows={venues}
-              kind="venue"
-              onEdit={(row) =>
-                setDialog({
-                  title: tr("Editar espacio"),
-                  fields: [
-                    text("name", tr("Nombre")),
-                    {
-                      name: "capacity",
-                      label: tr("Capacidad"),
-                      type: "number",
-                    },
-                    {
-                      name: "exclusive",
-                      label: tr("Recurso de uso exclusivo"),
-                      type: "checkbox",
-                    },
-                  ],
-                  initial: row,
-                  submit: async (body) => {
-                    await run(
-                      `/venues/${row.id}`,
-                      "PATCH",
-                      clean(body),
-                      row.revision,
-                    );
-                  },
-                })
-              }
-              onArchive={(row) =>
-                void archiveResource(`/venues/${row.id}`, row)
-              }
-            />
-          </Panel>
+          <VenuesSection
+            venues={venues}
+            setDialog={setDialog}
+            run={run}
+            archiveResource={archiveResource}
+          />
         )}
 
         {section === "speakers" && (
-          <Panel
-            title={tr("Directorio de ponentes")}
-            subtitle={tr("Perfiles y disponibilidad de ponentes.")}
-            action={
-              <button
-                className="link-button"
-                onClick={() =>
-                  void inspect(
-                    tr("Aviso de consentimiento"),
-                    "/speakers/consent-notice",
-                  )
-                }
-              >
-                {tr("Ver aviso de consentimiento")} <ArrowRight size={15} />
-              </button>
-            }
-          >
-            <ResourceList
-              rows={speakers}
-              kind="speaker"
-              onEdit={(row) =>
-                setDialog({
-                  title: tr("Editar ponente"),
-                  description: tr(
-                    "Para cambiar el consentimiento consulta primero el aviso vigente.",
-                  ),
-                  fields: [
-                    text("display_name", tr("Nombre")),
-                    { name: "bio", label: tr("Biografía"), type: "textarea" },
-                    text("media_ref", tr("Referencia multimedia")),
-                    {
-                      name: "exclusive",
-                      label: tr("Disponibilidad exclusiva"),
-                      type: "checkbox",
-                    },
-                  ],
-                  initial: row,
-                  submit: async (body) => {
-                    await run(
-                      `/speakers/${row.id}`,
-                      "PATCH",
-                      clean(body),
-                      row.revision,
-                    );
-                  },
-                })
-              }
-              onArchive={(row) =>
-                void archiveResource(`/speakers/${row.id}`, row)
-              }
-              extra={(row) => (
-                <>
-                  <button
-                    className="small-button"
-                    onClick={async () => {
-                      try {
-                        const n = await request(
-                          actor,
-                          "/speakers/consent-notice",
-                        );
-                        setDialog({
-                          title: tr("Registrar consentimiento"),
-                          description: `${tr("Aviso")} ${n.version}: ${n.text}`,
-                          fields: [
-                            {
-                              name: "public_consent",
-                              label: tr("Acepta la publicación del perfil"),
-                              type: "checkbox",
-                            },
-                          ],
-                          submit: async (body) => {
-                            await run(
-                              `/speakers/${row.id}`,
-                              "PATCH",
-                              body.public_consent
-                                ? {
-                                    public_consent: true,
-                                    public_consent_version: n.version,
-                                  }
-                                : { public_consent: false },
-                              row.revision,
-                            );
-                          },
-                        });
-                      } catch (error) {
-                        showError(error);
-                      }
-                    }}
-                  >
-                    {tr("Consentimiento")}
-                  </button>
-                </>
-              )}
-            />
-          </Panel>
+          <SpeakersSection
+            speakers={speakers}
+            request={request}
+            inspect={inspect}
+            setDialog={setDialog}
+            run={run}
+            archiveResource={archiveResource}
+            showError={showError}
+          />
         )}
 
         {(section === "agenda" ||
@@ -1269,160 +728,23 @@ export function EventsModule({
           </div>
         )}
 
-        {section === "agenda" &&
-          (selected ? (
-            <div className="stack">
-              <Panel
-                title={tr("Programas")}
-                subtitle={tr("Agrupa las sesiones por tema o itinerario.")}
-                action={
-                  !isReader && (
-                    <button
-                      className="button secondary compact"
-                      onClick={createProgram}
-                    >
-                      <Plus size={15} /> {tr("Nuevo programa")}
-                    </button>
-                  )
-                }
-              >
-                <ResourceList
-                  rows={programs}
-                  kind="program"
-                  onEdit={(row) =>
-                    setDialog({
-                      title: tr("Editar programa"),
-                      fields: [
-                        text("name", tr("Nombre")),
-                        text("slug", tr("Identificador")),
-                        {
-                          name: "display_order",
-                          label: tr("Orden"),
-                          type: "number",
-                        },
-                        text("color", tr("Color (#RRGGBB)")),
-                        {
-                          name: "description",
-                          label: tr("Descripción"),
-                          type: "textarea",
-                        },
-                      ],
-                      initial: row,
-                      submit: async (body) => {
-                        await run(
-                          `${selectedPath}/programs/${row.id}`,
-                          "PATCH",
-                          clean(body),
-                          row.revision,
-                        );
-                      },
-                    })
-                  }
-                  onArchive={(row) =>
-                    void archiveResource(
-                      `${selectedPath}/programs/${row.id}`,
-                      row,
-                    )
-                  }
-                />
-              </Panel>
-
-              <Panel
-                title={tr("Sesiones")}
-                subtitle={tr(
-                  "Crea borradores y reserva los recursos al programarlos.",
-                )}
-                action={
-                  <div className="button-row">
-                    {permissions.write && (
-                      <button
-                        className="button secondary compact"
-                        onClick={() =>
-                          command(
-                            tr("Validar agenda"),
-                            `${selectedPath}/schedule-validations`,
-                            [
-                              {
-                                name: "expected_event_revision",
-                                label: tr("Revisión del evento"),
-                                type: "number",
-                                required: true,
-                              },
-                              {
-                                name: "candidate_sessions",
-                                label: tr("Sesiones candidatas (JSON)"),
-                                type: "json",
-                                required: true,
-                                hint: tr(
-                                  "Para validar la agenda existente utiliza [].",
-                                ),
-                              },
-                            ],
-                            {
-                              expected_event_revision: selected.revision_number,
-                              candidate_sessions: [],
-                            },
-                          )
-                        }
-                      >
-                        {tr("Validar agenda")}
-                      </button>
-                    )}
-                    {!isReader && (
-                      <button
-                        className="button primary compact"
-                        onClick={createSession}
-                      >
-                        <Plus size={15} /> {tr("Nueva sesión")}
-                      </button>
-                    )}
-                  </div>
-                }
-              >
-                {sessions.length ? (
-                  <div className="resource-list">
-                    {sessions.map((row) => (
-                      <div className="resource-row" key={row.id}>
-                        <div className="resource-icon lavender">
-                          <Clock3 size={18} />
-                        </div>
-                        <div className="resource-main">
-                          <strong>{row.title}</strong>
-                          <span>
-                            {displayDate(row.starts_at)} ·{" "}
-                            {displayDate(row.ends_at)}
-                          </span>
-                        </div>
-                        <Badge status={row.status} />
-                        {row.status === "draft" && !isReader && (
-                          <button
-                            className="small-button"
-                            onClick={() => void schedule(row)}
-                          >
-                            {tr("Programar")}
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <Empty
-                    title={tr("Aún no hay sesiones")}
-                    description={tr(
-                      "Añade una sesión después de crear un programa y una sede.",
-                    )}
-                  />
-                )}
-              </Panel>
-            </div>
-          ) : (
-            <Empty
-              title={tr("Selecciona un evento")}
-              description={tr(
-                "Elige un evento arriba para administrar su agenda.",
-              )}
-            />
-          ))}
+        {section === "agenda" && (
+          <AgendaSection
+            selected={selected}
+            selectedPath={selectedPath}
+            programs={programs}
+            sessions={sessions}
+            canWrite={permissions.write}
+            isReader={isReader}
+            onCreateProgram={createProgram}
+            onCreateSession={createSession}
+            onScheduleSession={schedule}
+            setDialog={setDialog}
+            run={run}
+            command={command}
+            archiveResource={archiveResource}
+          />
+        )}
 
         {section === "forms" && (
           <FormsPanel
@@ -1434,240 +756,33 @@ export function EventsModule({
           />
         )}
 
-        {section === "publication" &&
-          (selected ? (
-            <div className="stack">
-              <div className="info-banner">
-                <div className="info-symbol">
-                  <Sparkles size={19} />
-                </div>
-                <div>
-                  <strong>{tr("Antes de publicar")}</strong>
-                  <p>
-                    {tr(
-                      "Verifica que tu evento, agenda y formularios estén completos.",
-                    )}
-                  </p>
-                </div>
-              </div>
+        {section === "publication" && (
+          <PublicationSection
+            selected={selected}
+            selectedPath={selectedPath}
+            canPublish={canPublish}
+            request={request}
+            command={command}
+            inspect={inspect}
+            setDialog={setDialog}
+            onShowArtifactOutput={(title, data) => {
+              if (contextRef.current === currentContext) {
+                setOutput({ title, data });
+              }
+            }}
+          />
+        )}
 
-              <Panel
-                title={tr("Publicación del evento")}
-                subtitle={`${tr("Trabajando con la revisión")} ${selected.revision_number}.`}
-              >
-                <div className="button-row publication-actions">
-                  {canPublish && (
-                    <button
-                      className="button secondary"
-                      onClick={() =>
-                        command(
-                          tr("Validar publicación"),
-                          `${selectedPath}/publication-validations`,
-                          [
-                            {
-                              name: "expected_event_revision",
-                              label: tr("Revisión del evento"),
-                              type: "number",
-                              required: true,
-                            },
-                          ],
-                          { expected_event_revision: selected.revision_number },
-                        )
-                      }
-                    >
-                      <FileCheck2 size={16} /> {tr("Validar publicación")}
-                    </button>
-                  )}
-                  {canPublish && (
-                    <button
-                      className="button primary"
-                      onClick={() =>
-                        command(
-                          tr("Publicar nueva versión"),
-                          `${selectedPath}/releases`,
-                          [
-                            {
-                              name: "expected_event_revision",
-                              label: tr("Revisión del evento"),
-                              type: "number",
-                              required: true,
-                            },
-                            date("effective_at", tr("Fecha efectiva"), false),
-                          ],
-                          { expected_event_revision: selected.revision_number },
-                          selected.revision_number,
-                        )
-                      }
-                    >
-                      {tr("Publicar versión")} <ArrowRight size={16} />
-                    </button>
-                  )}
-                  <button
-                    className="button secondary"
-                    onClick={() =>
-                      void inspect(
-                        tr("Versiones publicadas"),
-                        `${selectedPath}/releases`,
-                      )
-                    }
-                  >
-                    {tr("Ver versiones")}
-                  </button>
-                  <button
-                    className="button secondary"
-                    onClick={() =>
-                      setDialog({
-                        title: tr("Consultar versión o artefacto"),
-                        description: tr(
-                          "Copia el ID de una versión desde «Ver versiones».",
-                        ),
-                        fields: [
-                          text("release_id", tr("ID de la versión"), true),
-                          {
-                            name: "view",
-                            label: tr("Contenido"),
-                            type: "select",
-                            required: true,
-                            options: [
-                              { value: "", label: tr("Versión") },
-                              { value: "/manifest", label: tr("Manifiesto") },
-                              {
-                                value: "/manifest/artifacts/event",
-                                label: tr("Artefacto: evento"),
-                              },
-                              {
-                                value: "/manifest/artifacts/schedule",
-                                label: tr("Artefacto: agenda"),
-                              },
-                              {
-                                value: "/manifest/artifacts/forms",
-                                label: tr("Artefacto: formularios"),
-                              },
-                            ],
-                          },
-                        ],
-                        initial: { view: "/manifest" },
-                        submit: async (body) => {
-                          const data = await request(
-                            actor,
-                            `${selectedPath}/releases/${body.release_id}${body.view || ""}`,
-                          );
-                          if (contextRef.current === currentContext) {
-                            setOutput({
-                              title: tr("Contenido de la versión"),
-                              data,
-                            });
-                          }
-                        },
-                      })
-                    }
-                  >
-                    {tr("Consultar artefacto")}
-                  </button>
-                </div>
-              </Panel>
-            </div>
-          ) : (
-            <Empty
-              title={tr("Selecciona un evento")}
-              description={tr("Elige un evento para preparar su publicación.")}
-            />
-          ))}
-
-        {section === "activity" &&
-          (selected ? (
-            <div className="stack">
-              <Panel
-                title={tr("Trazabilidad y responsables")}
-                subtitle={tr(
-                  "Consulta los registros y asignaciones del evento.",
-                )}
-              >
-                <div className="button-row publication-actions">
-                  {[
-                    [tr("Revisiones"), "revisions"],
-                    [tr("Auditoría"), "audit"],
-                    [tr("Historial"), "history"],
-                    [tr("Asignaciones"), "assignments"],
-                  ].map(([label, path]) => (
-                    <button
-                      className="button secondary"
-                      key={path}
-                      onClick={() =>
-                        void inspect(label, `${selectedPath}/${path}`)
-                      }
-                    >
-                      {label}
-                    </button>
-                  ))}
-                  {!isReader && (
-                    <>
-                      <button
-                        className="button secondary"
-                        onClick={() =>
-                          setDialog({
-                            title: tr("Asignar responsable"),
-                            fields: [
-                              text("user_id", tr("ID de usuario (UUID)"), true),
-                              text("role", tr("Rol"), true),
-                              text(
-                                "scopes",
-                                tr("Permisos separados por comas"),
-                                true,
-                              ),
-                            ],
-                            initial: {
-                              role: "event_manager",
-                              scopes: "events:read,events:write",
-                            },
-                            submit: async (body) => {
-                              await run(`${selectedPath}/assignments`, "POST", {
-                                ...body,
-                                scopes: String(body.scopes)
-                                  .split(",")
-                                  .map((s) => s.trim())
-                                  .filter(Boolean),
-                              });
-                            },
-                          })
-                        }
-                      >
-                        {tr("Asignar responsable")}
-                      </button>
-                      <button
-                        className="button secondary"
-                        onClick={() =>
-                          setDialog({
-                            title: tr("Revocar asignación"),
-                            fields: [
-                              text(
-                                "assignment_id",
-                                tr("ID de asignación"),
-                                true,
-                              ),
-                            ],
-                            submit: async (body) => {
-                              await run(
-                                `${selectedPath}/assignments/${body.assignment_id}`,
-                                "DELETE",
-                              );
-                            },
-                          })
-                        }
-                      >
-                        {tr("Revocar asignación")}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </Panel>
-            </div>
-          ) : (
-            <Empty
-              title={tr("Selecciona un evento")}
-              description={tr("Elige un evento para consultar sus registros.")}
-            />
-          ))}
+        {section === "activity" && (
+          <ActivitySection
+            selected={selected}
+            selectedPath={selectedPath}
+            isReader={isReader}
+            inspect={inspect}
+            setDialog={setDialog}
+            run={run}
+          />
+        )}
 
         {output && (
           <Panel
@@ -1689,8 +804,13 @@ export function EventsModule({
 
         <footer>
           <span>{tr("© Grupo 2 · Configuración de eventos")}</span>
-          <span>
-            {tr("ENTORNO DE DESARROLLO")} <span className="footer-dot">●</span>
+          <span role="status">
+            {connection === "online"
+              ? tr("API conectada")
+              : connection === "loading"
+                ? tr("Conectando")
+                : tr("API no disponible")}{" "}
+            <span className="footer-dot">●</span>
           </span>
         </footer>
       </div>
@@ -1706,13 +826,12 @@ export function EventsModule({
   );
 }
 
-async function loadAll(request: EventsRequest, actor: string, path: string) {
+async function loadAll(request: EventsRequest, path: string) {
   const result: RecordData[] = [];
   const seen = new Set<string>();
   let cursor: string | null = null;
   do {
     const page: RecordData = await request(
-      actor,
       `${path}?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
     );
     result.push(...items(page));

@@ -71,6 +71,7 @@ services:
       POSTGRES_PASSWORD: ${APP_DB_PASSWORD:?Define APP_DB_PASSWORD en .env}
       NODE_ENV: development
       AUTH_MODE: mock
+      NEXO_JWT_SECRET: ${NEXO_JWT_SECRET:-nexo-local-development-secret-change-me}
       MEMBERSHIP_MODE: mock
       PORT: "3000"
       SPEAKER_CONSENT_NOTICE_TEXT: ${SPEAKER_CONSENT_NOTICE_TEXT:-}

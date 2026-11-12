@@ -285,7 +285,11 @@ func (s *Server) sidebar(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		role = "member"
 	}
-	items := []map[string]any{{"id": "overview", "label": "Inicio", "description": "Contexto de tu organización", "route": "/", "icon": "layout-dashboard", "capabilities": []string{}}, {"id": "onsite-operations", "label": "Onsite Operations", "description": "Check-in y operación presencial", "route": "/onsite", "icon": "calendar-check-2", "capabilities": []string{"onsite:read"}}}
+	eventCaps := []string{"events:read"}
+	if role == "owner" || role == "admin" {
+		eventCaps = []string{"events:read", "events:write", "events:publish"}
+	}
+	items := []map[string]any{{"id": "overview", "label": "Inicio", "description": "Contexto de tu organización", "route": "/", "icon": "layout-dashboard", "capabilities": []string{}}, {"id": "onsite-operations", "label": "Onsite Operations", "description": "Check-in y operación presencial", "route": "/onsite", "icon": "calendar-check-2", "capabilities": []string{"onsite:read"}}, {"id": "events", "label": "Eventos", "description": "Configuración, agenda, ponentes y formularios", "route": "/events", "icon": "calendar", "capabilities": eventCaps}}
 	if role == "member" {
 		items = items[:1]
 	}

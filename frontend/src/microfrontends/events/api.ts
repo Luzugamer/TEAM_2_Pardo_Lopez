@@ -70,7 +70,6 @@ export interface EventsTransport {
 }
 
 export type EventsRequest = <T = RecordData>(
-  actor: string,
   path: string,
   options?: EventsRequestOptions,
 ) => Promise<T>;
@@ -79,13 +78,26 @@ function isRecordObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-export function createEventsTransport(config: {
+export interface EventsTransportConfig {
   baseUrl: string;
-  mode: 'demo' | 'unavailable';
+  mode: 'authenticated' | 'demo' | 'unavailable';
   development: boolean;
-  actor: string;
-}): EventsTransport {
-  if (config.mode !== 'demo' || !config.development) {
+  accessToken?: string;
+  tenantId?: string;
+  actor?: string;
+}
+
+export function createEventsTransport(
+  config: EventsTransportConfig,
+): EventsTransport {
+  const canUseAuthenticated =
+    config.mode === 'authenticated' &&
+    Boolean(config.accessToken) &&
+    Boolean(config.tenantId);
+  const canUseDemo =
+    config.mode === 'demo' && config.development && Boolean(config.actor);
+
+  if (!canUseAuthenticated && !canUseDemo) {
     return {
       request: async <T = RecordData>(): Promise<T> => {
         throw new Error(
@@ -101,9 +113,14 @@ export function createEventsTransport(config: {
     ): Promise<T> {
       const method = options.method ?? 'GET';
       const headers: Record<string, string> = {
-        'x-dev-actor': config.actor,
         Accept: 'application/json',
       };
+      if (canUseAuthenticated) {
+        headers.Authorization = `Bearer ${config.accessToken}`;
+        headers['X-Tenant-Id'] = config.tenantId!;
+      } else if (config.actor) {
+        headers['x-dev-actor'] = config.actor;
+      }
       if (options.body !== undefined) {
         headers['Content-Type'] = 'application/json';
       }

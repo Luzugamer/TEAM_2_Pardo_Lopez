@@ -25,4 +25,19 @@ describe('Configuration transport boundary',()=>{
     await expect(transport.request('/events',{method:'POST',body:{}})).rejects.toThrow('Conflicto');
     expect(fetch.mock.calls[0][1].headers['Idempotency-Key']).toBeTruthy();
   });
+  it('sends Nexo bearer token and tenant id in authenticated mode without dev actor',async()=>{
+    const fetch=vi.fn().mockResolvedValue({ok:true,text:async()=>' {"items":[]}'});vi.stubGlobal('fetch',fetch);
+    const transport=createEventsTransport({baseUrl:'http://localhost:3000',mode:'authenticated',development:false,accessToken:'jwt-token',tenantId:'tenant-uuid'});
+    await transport.request('/events');
+    const headers=fetch.mock.calls[0][1].headers;
+    expect(headers.Authorization).toBe('Bearer jwt-token');
+    expect(headers['X-Tenant-Id']).toBe('tenant-uuid');
+    expect(headers['x-dev-actor']).toBeUndefined();
+  });
+  it('fails closed in authenticated mode when token or tenant is missing',async()=>{
+    const fetch=vi.fn();vi.stubGlobal('fetch',fetch);
+    const transport=createEventsTransport({baseUrl:'http://localhost:3000',mode:'authenticated',development:true,accessToken:'',tenantId:'tenant-uuid'});
+    await expect(transport.request('/events')).rejects.toThrow('pendiente');
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

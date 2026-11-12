@@ -166,7 +166,7 @@ test('configureApp disables Swagger in production and rejects non-whitelisted DT
   }
 });
 
-test('application and domain layers do not import from presentation or ProblemDetailsException', () => {
+test('application and domain layers do not import from presentation, infrastructure or ProblemDetailsException', () => {
   const srcRoot = path.join(apiRoot, 'src');
   const walk = (dir) => {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -194,6 +194,11 @@ test('application and domain layers do not import from presentation or ProblemDe
       /from\s+['"][^'"]*presentation\//.test(source),
       false,
       `${relPath} must not import from presentation/`,
+    );
+    assert.equal(
+      /from\s+['"][^'"]*infrastructure\//.test(source),
+      false,
+      `${relPath} must not import from infrastructure/`,
     );
     assert.equal(
       source.includes('ProblemDetailsException'),

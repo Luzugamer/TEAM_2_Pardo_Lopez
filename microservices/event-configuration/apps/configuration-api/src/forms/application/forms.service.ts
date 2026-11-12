@@ -5,7 +5,7 @@ import {
   FormDraft,
   FormVersion,
   BindingInput,
-} from '../domain/forms.repository';
+} from '../domain/ports/forms-repository.port';
 import { FORM_VALIDATOR, FormValidator } from './form-validator.port';
 import { computeSha256 } from '../../shared/crypto/canonical-json';
 import { DomainException } from '../../shared/errors/domain.exception';
