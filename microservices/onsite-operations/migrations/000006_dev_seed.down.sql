@@ -1,0 +1,1 @@
+-- Seed is reversible through seeds/demo-day.sql cleanup in local/test only.

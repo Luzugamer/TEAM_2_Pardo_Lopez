@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexo}
+      POSTGRES_USER: ${POSTGRES_USER:-nexo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexo-local-only}
+    ports:
+      - "5433:5432"
+    volumes:
+      - nexo_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexo} -d ${POSTGRES_DB:-nexo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    container_name: nexo-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    command: ["-path=/migrations", "-database=postgres://${POSTGRES_USER:-nexo}:${POSTGRES_PASSWORD:-nexo-local-only}@postgres:5432/${POSTGRES_DB:-nexo}?sslmode=disable", "up"]
+
+  core-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexo-core-api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-nexo}:${POSTGRES_PASSWORD:-nexo-local-only}@postgres:5432/${POSTGRES_DB:-nexo}?sslmode=disable
+      NEXO_JWT_SECRET: ${NEXO_JWT_SECRET:-nexo-local-development-secret-change-me}
+      NEXO_CORE_API_ADDR: :8081
+    ports:
+      - "8081:8081"
+
+volumes:
+  nexo_pg_data:

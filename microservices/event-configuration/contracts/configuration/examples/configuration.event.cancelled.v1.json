@@ -1,0 +1,30 @@
+{
+  "message_id": "1194eb00-0000-7000-8000-000000000101",
+  "domain_event_id": "1194eb00-0000-7000-8000-000000000101",
+  "topic": "configuration.event.cancelled.v1",
+  "schema_version": 1,
+  "producer": "configuration",
+  "organization_id": "0194eb00-0000-7000-8000-000000000001",
+  "business_event_id": "0194eb00-0000-7000-8000-000000000002",
+  "occurred_at": "2026-11-01T10:00:00Z",
+  "published_at": "2026-11-01T10:00:00Z",
+  "actor": {
+    "type": "user",
+    "id": "organizer-example"
+  },
+  "traceparent": null,
+  "correlation_id": "0194eb00-0000-7000-8000-000000000103",
+  "causation_id": null,
+  "aggregate": {
+    "type": "event",
+    "id": "0194eb00-0000-7000-8000-000000000002",
+    "version": 2
+  },
+  "partition_key": "0194eb00-0000-7000-8000-000000000001:0194eb00-0000-7000-8000-000000000002",
+  "data": {
+    "event_id": "0194eb00-0000-7000-8000-000000000002",
+    "release_id": null,
+    "reason_code": "ORGANIZER_CANCELLED",
+    "effective_at": "2026-11-20T10:00:00Z"
+  }
+}

@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  contracts-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate committed OpenAPI YAML documents
+        run: find . -path '*/docs/openapi.yaml' -print0 | xargs -0 -r ruby -e "require 'yaml'; ARGV.each { |file| YAML.load_file(file) }"
+
+  frontend-quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run tokens:validate
+      - run: npm run build
+      - run: npm run test
+
+  frontend-e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - run: npm run test:e2e:events
+      - run: npm run test:e2e:shell-check
+
+  core-api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+      - run: go test ./...
+      - run: go vet ./...
+
+  onsite-operations:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: microservices/onsite-operations
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: microservices/onsite-operations/go.mod
+      - run: make test
+      - run: go vet ./...
+
+  event-configuration:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: microservices/event-configuration
+    env:
+      POSTGRES_DB: nexo_events_publication_test
+      POSTGRES_USER: configuration_migrator
+      POSTGRES_PASSWORD: local_ci_admin_only
+      APP_DB_PASSWORD: local_ci_runtime_only
+      DB_PORT: '15546'
+      API_PORT: '13013'
+      ADMIN_PORT: '18093'
+      PUBLICATION_TEST_CONFIRM: nexo-events-publication-check-only
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Enable project pnpm version
+        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:api
+      - run: pnpm test:api
+      - run: pnpm test:worker
+      - run: pnpm test:composition
+      - run: pnpm test:contract-consumer
+      - run: pnpm test:event-schemas
+      - name: Start isolated Events fixture
+        run: docker compose -p nexo-events-publication-check up -d --build db bootstrap-local migrate api
+      - name: Seed the isolated fixture
+        run: cat db/seed/datos-demostracion.sql | docker compose -p nexo-events-publication-check exec -T db psql -v ON_ERROR_STOP=1 -U configuration_migrator -d nexo_events_publication_test
+      - name: Verify publication and concurrency
+        run: pnpm test:publication:integration
+      - name: Stop isolated Events fixture
+        if: always()
+        run: docker compose -p nexo-events-publication-check down -v
+
+      - name: Start isolated forms fixture
+        env:
+          POSTGRES_DB: nexo_events_forms_test
+          DB_PORT: '15548'
+          API_PORT: '13015'
+          ADMIN_PORT: '18095'
+        run: docker compose -p nexo-events-forms-check up -d --build db bootstrap-local migrate api
+      - name: Verify forms lifecycle
+        env:
+          FORMS_TEST_CONFIRM: nexo-events-forms-check-only
+        run: pnpm test:forms:integration
+      - name: Stop isolated forms fixture
+        if: always()
+        env:
+          POSTGRES_DB: nexo_events_forms_test
+          DB_PORT: '15548'
+          API_PORT: '13015'
+          ADMIN_PORT: '18095'
+        run: docker compose -p nexo-events-forms-check down -v

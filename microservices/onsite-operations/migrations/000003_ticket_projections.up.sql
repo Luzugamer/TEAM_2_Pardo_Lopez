@@ -1,0 +1,2 @@
+CREATE TABLE onsite.ticket_projections(ticket_id text PRIMARY KEY,event_id uuid NOT NULL REFERENCES onsite.events(id),scope_id uuid NOT NULL REFERENCES onsite.scopes(id),status text NOT NULL CHECK(status IN ('active','revoked','expired')),expires_at timestamptz NOT NULL,masked_holder text NOT NULL,search_code text NOT NULL,confirmed_at timestamptz);
+CREATE INDEX ticket_search_exact ON onsite.ticket_projections(event_id,scope_id,search_code);

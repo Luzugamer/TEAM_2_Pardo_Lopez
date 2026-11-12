@@ -1,0 +1,14 @@
+:root {
+  /* Primitivas: azul institucional + acento ámbar. Nexo no hereda la identidad verde del POS. */
+  --nx-indigo-950:#111936; --nx-indigo-900:#1a2754; --nx-indigo-700:#344a9a; --nx-indigo-100:#e9edff;
+  --nx-blue-500:#3b5bdb; --nx-blue-100:#edf2ff; --nx-slate-950:#172033; --nx-slate-700:#475569; --nx-slate-500:#64748b; --nx-slate-300:#cbd5e1; --nx-slate-200:#e2e8f0; --nx-slate-100:#f8fafc; --nx-white:#fff;
+  --nx-orange-600:#c2410c; --nx-orange-100:#fff1e8; --nx-red-700:#b42318; --nx-red-100:#fff0ee; --nx-amber-700:#9a5b00; --nx-amber-100:#fff7db;
+  --nx-space-1:4px; --nx-space-2:8px; --nx-space-3:12px; --nx-space-4:16px; --nx-space-5:20px; --nx-space-6:24px; --nx-space-8:32px; --nx-space-10:40px; --nx-space-12:48px;
+  --nx-radius-sm:8px; --nx-radius-md:12px; --nx-radius-lg:16px; --nx-radius-pill:999px; --nx-shadow-card:0 12px 30px rgb(17 25 54 / 7%);
+  --nx-font-sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; --nx-font-mono:ui-monospace,SFMono-Regular,Menlo,monospace; --nx-text-xs:11px; --nx-text-sm:13px; --nx-text-md:14px; --nx-text-lg:18px; --nx-text-xl:30px; --nx-leading-tight:1.08; --nx-leading-body:1.55; --nx-motion-fast:150ms ease; --nx-motion-standard:220ms ease;
+  --nx-color-canvas:var(--nx-slate-100); --nx-color-surface:var(--nx-white); --nx-color-surface-subtle:#f3f6fc; --nx-color-text:var(--nx-slate-950); --nx-color-text-muted:var(--nx-slate-500); --nx-color-border:var(--nx-slate-200); --nx-color-brand:var(--nx-indigo-950); --nx-color-brand-hover:var(--nx-indigo-900); --nx-color-on-brand:#f5f7ff; --nx-color-on-danger:var(--nx-white); --nx-color-accent:var(--nx-orange-600); --nx-color-success:#176b50; --nx-color-success-bg:#e8f7f1; --nx-color-danger:var(--nx-red-700); --nx-color-danger-bg:var(--nx-red-100); --nx-color-warning:var(--nx-amber-700); --nx-color-warning-bg:var(--nx-amber-100); --nx-color-focus:#5269d8; --nx-sidebar-text:#b8c4e5; --nx-sidebar-muted:#8e9bc4; --nx-sidebar-active-bg:#27366d; --nx-sidebar-active-text:#ffffff; --nx-sidebar-active-muted:#c9d3f4; --nx-sidebar-border:#2b3b73; --nx-sidebar-online:#f6ae49; --nx-focus-ring:0 0 0 3px rgb(82 105 216 / 30%);
+  --nx-button-height:42px; --nx-button-radius:var(--nx-radius-sm); --nx-input-height:44px; --nx-card-padding:var(--nx-space-6); --nx-sidebar-width:250px;
+  /* Compatibilidad de componentes existentes: estos aliases ya no representan color verde. */
+  --nx-forest-100:var(--nx-indigo-100); --nx-forest-700:var(--nx-indigo-700);
+}
+[data-theme="dark"] { --nx-color-canvas:#0f1428; --nx-color-surface:#171e38; --nx-color-surface-subtle:#20294a; --nx-color-text:#f2f5ff; --nx-color-text-muted:#aeb9d7; --nx-color-border:#35436f; --nx-color-success-bg:#173f35; --nx-color-danger-bg:#4b2429; --nx-color-warning-bg:#49391d; }

@@ -1,0 +1,13 @@
+# Copy this file to .github/CODEOWNERS and replace every placeholder with real GitHub users or teams.
+# Do not enable required Code Owner reviews until all placeholders have been replaced.
+
+/frontend/src/shell/                 @ORG/platform-team
+/frontend/src/platform/              @ORG/platform-team
+/frontend/src/design-system/          @ORG/platform-team
+/frontend/src/core/i18n.ts            @ORG/platform-team
+/frontend/e2e/                        @ORG/quality-team
+/backend/                             @ORG/core-team
+/microservices/onsite-operations/     @ORG/team-4
+/docs/engineering/                    @ORG/platform-team
+/test/fixtures/shared/                @ORG/quality-team
+/.github/                             @ORG/platform-team

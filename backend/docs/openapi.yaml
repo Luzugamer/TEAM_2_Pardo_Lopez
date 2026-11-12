@@ -1,0 +1,103 @@
+openapi: 3.0.3
+info:
+  title: Nexo Core API
+  version: 0.1.0
+  description: Identidad, tenants y navegación del shell Nexo.
+servers:
+  - url: http://localhost:8081
+paths:
+  /healthz:
+    get:
+      responses:
+        '200': { description: Servicio disponible }
+  /v1/auth/register:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201': { description: Usuario creado }
+        '409': { description: Correo ya registrado }
+  /v1/auth/login:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200': { description: Sesión creada, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }
+        '401': { description: Credenciales inválidas }
+  /v1/auth/refresh:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [refresh_token], properties: { refresh_token: { type: string } } }
+      responses:
+        '200': { description: Sesión rotada }
+  /v1/auth/me:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Perfil y tenants }
+  /v1/auth/logout:
+    post:
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Sesión revocada }
+  /v1/tenants:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Tenants del usuario }
+    post:
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TenantRequest' }
+      responses:
+        '201': { description: Tenant creado }
+  /v1/navigation/sidebar:
+    get:
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: tenant_id, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Módulos visibles para el usuario }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer }
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [email, name, password]
+      properties:
+        email: { type: string, format: email }
+        name: { type: string }
+        password: { type: string, format: password, minLength: 8 }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+    TenantRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        slug: { type: string }
+    Session:
+      type: object
+      required: [access_token, refresh_token, expires_at, profile]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_at: { type: integer, format: int64 }
+        profile: { type: object }

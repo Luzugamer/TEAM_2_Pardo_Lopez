@@ -1,0 +1,79 @@
+openapi: 3.1.0
+info:
+  title: Nexo Onsite Operations API
+  version: 1.0.0
+  description: API persistente para la operación presencial de eventos.
+servers:
+  - url: http://localhost:8082
+security:
+  - bearerAuth: []
+tags:
+  - name: Health
+  - name: Onsite
+paths:
+  /health/live:
+    get:
+      tags: [Health]
+      responses:
+        '200': {description: Servicio activo, content: {application/json: {schema: {$ref: '#/components/schemas/HealthResponse'}}}}
+  /health/ready:
+    get:
+      tags: [Health]
+      security: []
+      responses:
+        '200': {description: PostgreSQL disponible, content: {application/json: {schema: {$ref: '#/components/schemas/HealthResponse'}}}}
+        '503': {description: PostgreSQL no disponible, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+  /onsite/v1/readiness:
+    get:
+      tags: [Onsite]
+      parameters: [{$ref: '#/components/parameters/EventId'}, {$ref: '#/components/parameters/Scope'}]
+      responses:
+        '200': {description: Estado del puesto, content: {application/json: {schema: {$ref: '#/components/schemas/Readiness'}}}}
+        '403': {description: Asignación inválida, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+  /onsite/v1/tickets/search:
+    get:
+      tags: [Onsite]
+      parameters: [{$ref: '#/components/parameters/Query'}, {$ref: '#/components/parameters/EventId'}, {$ref: '#/components/parameters/Scope'}]
+      responses:
+        '200': {description: Candidatos minimizados, content: {application/json: {schema: {type: array, maxItems: 5, items: {$ref: '#/components/schemas/TicketSearchResult'}}}}}
+        '400': {description: Query inválido, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+  /onsite/v1/attendance/check-ins:
+    post:
+      tags: [Onsite]
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CheckInRequest'}, example: {ticket_id: DEMO-2026-001, event_id: event-demo, scope: main}}}}
+      responses:
+        '201': {description: Entrada registrada, content: {application/json: {schema: {$ref: '#/components/schemas/AttendanceFact'}}}}
+        '400': {description: Request inválido, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+        '409': {description: Duplicado o key reutilizada, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+        '422': {description: Ticket no admisible, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+  /onsite/v1/attendance:
+    get:
+      tags: [Onsite]
+      parameters: [{$ref: '#/components/parameters/EventId'}, {$ref: '#/components/parameters/Scope'}, {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}, {name: cursor, in: query, required: false, schema: {type: string}}]
+      responses:
+        '200': {description: Historial append-only, content: {application/json: {schema: {$ref: '#/components/schemas/AttendancePage'}}}}
+        '400': {description: Filtro inválido, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+  /onsite/v1/dashboard:
+    get:
+      tags: [Onsite]
+      parameters: [{$ref: '#/components/parameters/EventId'}]
+      responses:
+        '200': {description: Métricas operativas, content: {application/json: {schema: {$ref: '#/components/schemas/Dashboard'}}}}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    EventId: {name: event_id, in: query, required: true, schema: {type: string, minLength: 1}, example: event-demo}
+    Scope: {name: scope, in: query, required: true, schema: {type: string, minLength: 1}, example: main}
+    Query: {name: q, in: query, required: true, schema: {type: string, minLength: 4}, example: DEMO-2026-001}
+    IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, format: uuid}}
+  schemas:
+    HealthResponse: {type: object, required: [status], properties: {status: {type: string, example: ok}, database: {type: string, example: ready}}}
+    CheckInRequest: {type: object, required: [ticket_id, event_id, scope], properties: {ticket_id: {type: string, example: DEMO-2026-001}, event_id: {type: string, example: event-demo}, scope: {type: string, example: main}}}
+    TicketSearchResult: {type: object, required: [ticket_id, masked_holder, status], properties: {ticket_id: {type: string}, masked_holder: {type: string}, status: {type: string, enum: [active, revoked, expired]}}}
+    AttendanceFact: {type: object, required: [id, ticket_id, event_id, scope, type, occurred_at, effective_status], properties: {id: {type: string, format: uuid}, ticket_id: {type: string}, event_id: {type: string}, scope: {type: string}, type: {type: string, enum: [check_in, check_out, void]}, occurred_at: {type: string, format: date-time}, effective_status: {type: string}}}
+    AttendancePage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/AttendanceFact'}}, next_cursor: {type: string, nullable: true}}}
+    Dashboard: {type: object, required: [registered, confirmed, present, attendance_rate], properties: {registered: {type: integer}, confirmed: {type: integer}, present: {type: integer}, attendance_rate: {type: number, format: double}}}
+    Readiness: {type: object, required: [ready, event_id, scope, device_id], properties: {ready: {type: boolean}, event_id: {type: string}, scope: {type: string}, device_id: {type: string}}}
+    Problem: {type: object, required: [type, title, status, code, detail, trace_id], properties: {type: {type: string}, title: {type: string}, status: {type: integer}, code: {type: string}, detail: {type: string}, trace_id: {type: string}}}

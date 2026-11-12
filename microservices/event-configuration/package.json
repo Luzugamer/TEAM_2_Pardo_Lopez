@@ -1,0 +1,38 @@
+{
+  "name": "event-platform-team-2",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.20.0",
+  "description": "Team 2 - Event Configuration Service (Events, Schedule, Forms, Publishing)",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "start:api": "pnpm --filter @team-2/configuration-api start:dev",
+    "start:worker": "pnpm --filter @team-2/configuration-worker start",
+    "build:api": "pnpm --filter @team-2/configuration-api build",
+    "start:admin": "pnpm --filter @team-2/configuration-admin dev",
+    "build:admin": "pnpm --filter @team-2/configuration-admin build",
+    "test:api": "pnpm --filter @team-2/configuration-api test",
+    "test:contract-consumer": "pnpm --filter @team-2/configuration-api exec vitest run --root ../.. tests/contract-consumer",
+    "typecheck:contract-consumer": "pnpm --filter @team-2/configuration-api exec tsc --project ../../tests/contract-consumer/tsconfig.json",
+    "test:composition": "node --test tests/runtime/api-composition.test.cjs",
+    "test:worker": "node --test tests/runtime/worker-relay.test.mjs",
+    "test:publication:integration": "node --test tests/integration/publication-consistency.mjs",
+    "test:forms:integration": "node --test tests/integration/forms-http.mjs",
+    "test:event-schemas": "node --test tests/runtime/event-schema-contract.test.cjs",
+    "format": "prettier --write \"apps/configuration-api/src/forms/application/forms.service.ts\" \"../../frontend/src/microfrontends/events/forms/FormsPanel.tsx\" \"../../frontend/src/microfrontends/events/EventsModule.tsx\"",
+    "format:check": "prettier --check \"apps/configuration-api/src/forms/application/forms.service.ts\" \"../../frontend/src/microfrontends/events/forms/FormsPanel.tsx\" \"../../frontend/src/microfrontends/events/EventsModule.tsx\"",
+    "lint": "eslint \"apps/**/*.{ts,tsx,mjs}\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.10",
+    "typescript": "^5.4.0",
+    "typescript-eslint": "^8.72.2"
+  }
+}

@@ -1,0 +1,2763 @@
+openapi: 3.1.0
+info:
+  title: Event Configuration API - Team 2
+  description: API for event lifecycle, schedule/resources, forms, and publication contracts. Responses include X-Request-Id. BearerAuth is the integration contract; DevActor is local development only.
+  version: 1.0.0
+tags:
+  - name: Schedule - EC-B
+    description: Venue, program, and session operations owned by Integrante B.
+servers:
+  - url: /configuration/v1
+    description: Base path for Configuration API v1
+
+paths:
+  /forms:
+    get:
+      operationId: listFormDefinitions
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      responses: { '200': { description: Lista de definiciones del tenant (máximo 100). } }
+    post:
+      operationId: createFormDefinition
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      parameters: [{ name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 128 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [name, purpose], properties: { name: { type: string, minLength: 1, maxLength: 180 }, purpose: { type: string, enum: [registration, application, feedback] } } }
+      responses: { '201': { description: Definición creada. }, '400': { description: Entrada inválida. }, '409': { description: Clave idempotente reutilizada. } }
+  /forms/{id}:
+    get:
+      operationId: getFormDefinition
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: Definición. }, '404': { description: No existe en el tenant. } }
+  /forms/{id}/versions:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      operationId: listFormVersions
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      responses: { '200': { description: Versiones de la definición. } }
+    post:
+      operationId: createFormVersion
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      parameters: [{ name: Idempotency-Key, in: header, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/FormsDraftInput' } } } }
+      responses: { '201': { description: Versión draft. }, '404': { description: Definición no encontrada. } }
+  /form-versions/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      operationId: getFormVersion
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      responses: { '200': { description: Versión. }, '404': { description: No encontrada. } }
+    patch:
+      operationId: updateFormVersionDraft
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      parameters: [{ name: If-Match, in: header, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/FormsDraftInput' } } } }
+      responses: { '200': { description: Draft actualizado. }, '409': { description: Versión no editable. }, '412': { description: Revisión obsoleta. } }
+  /form-versions/{id}/validations:
+    post:
+      operationId: validateFormVersion
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '201': { description: Resultado de validación y expected_hash para publicación. } }
+  /form-versions/{id}/publications:
+    post:
+      operationId: publishFormVersion
+      x-required-scope: events:publish
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: If-Match, in: header, required: true, schema: { type: string } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [expected_hash], properties: { expected_hash: { type: string, minLength: 64, maxLength: 64 } } } } } }
+      responses: { '201': { description: Versión publicada inmutable. }, '412': { description: Revisión o hash obsoleto. }, '422': { description: Draft inválido. } }
+  /events/{id}/form-bindings:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      operationId: listEventFormBindings
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      responses: { '200': { description: Bindings del evento. } }
+    post:
+      operationId: createEventFormBinding
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      parameters: [{ name: Idempotency-Key, in: header, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [form_version_id, purpose, status, opens_at, closes_at]
+              properties:
+                form_version_id: { type: string, format: uuid }
+                purpose: { type: string, enum: [registration, application, feedback] }
+                status: { type: string, enum: [scheduled, open], description: No existe activación automática de scheduled. }
+                opens_at: { type: string, format: date-time }
+                closes_at: { type: string, format: date-time }
+                replace_binding_id: { type: string, format: uuid }
+                replace_revision: { type: integer, minimum: 1 }
+                replace_reason: { type: string, minLength: 1, maxLength: 500 }
+      responses: { '201': { description: Binding creado. }, '409': { description: Ya existe un binding abierto para el propósito. }, '422': { description: Versión no publicable o propósito incompatible. } }
+  /bindings/{id}/openings:
+    post:
+      operationId: openScheduledFormBinding
+      description: Propuesta local; transición manual de scheduled a open.
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: If-Match, in: header, required: true, schema: { type: string } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      responses: { '200': { description: Binding abierto. }, '409': { description: Conflicto o transición inválida. }, '412': { description: Revisión obsoleta. } }
+  /bindings/{id}/cancellations:
+    post:
+      operationId: cancelFormBinding
+      description: Propuesta local; cancela un binding scheduled u open.
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: If-Match, in: header, required: true, schema: { type: string } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 1, maxLength: 500 } } } } } }
+      responses: { '200': { description: Binding cancelado. }, '409': { description: Transición inválida. }, '412': { description: Revisión obsoleta. } }
+  /bindings/{id}/closures:
+    post:
+      operationId: closeFormBinding
+      x-required-scope: events:write
+      security: [{ BearerAuth: [] }, { DevActor: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: If-Match, in: header, required: true, schema: { type: string } }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 1, maxLength: 500 } } } } } }
+      responses: { '200': { description: Binding cerrado. }, '409': { description: Transición inválida. }, '412': { description: Revisión obsoleta. } }
+  /speakers/consent-notice:
+    get:
+      tags: [Schedule - EC-B]
+      summary: Get the active speaker public-profile consent notice
+      description: Returns the server-configured notice and opaque version required when accepting public-profile publication.
+      operationId: ecBApi024GetSpeakerConsentNotice
+      x-requirement-id: EC-B-API-024
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      responses:
+        "200":
+          description: Current notice configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [version, text]
+                properties:
+                  version: { type: string, minLength: 1, maxLength: 80 }
+                  text: { type: string, minLength: 1, maxLength: 10000 }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+
+  /events:
+    post:
+      summary: Create a new event draft
+      operationId: createEvent
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+          description: Unique command idempotency token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventCreate"
+      responses:
+        "201":
+          description: Event successfully created in draft state.
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: Entity tag representing current revision number (e.g. "1").
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventResponse"
+        "400":
+          $ref: "#/components/responses/ProblemBadRequest"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "409":
+          $ref: "#/components/responses/ProblemConflict"
+        "422":
+          $ref: "#/components/responses/ProblemUnprocessable"
+
+    get:
+      summary: List events for the authenticated tenant with cursor pagination
+      operationId: listEvents
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: query
+          name: site_id
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: kind
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: status
+          required: false
+          schema:
+            type: string
+            enum: [draft, published, closed, cancelled, archived]
+        - in: query
+          name: from_date
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: to_date
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+          description: Opaque cursor for deterministic pagination.
+      responses:
+        "200":
+          description: List of events matching filters within tenant isolation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventListResponse"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+
+  /events/{id}:
+    get:
+      summary: Get event details by ID
+      operationId: getEventById
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Event found.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventResponse"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+
+    patch:
+      summary: Edit event metadata and rules with optimistic concurrency control
+      operationId: updateEvent
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+          description: Current revision ETag (e.g. "1") required for optimistic concurrency control.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventUpdate"
+      responses:
+        "200":
+          description: Event successfully updated with incremented revision number.
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: New revision number ETag (e.g. "2").
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventResponse"
+        "400":
+          $ref: "#/components/responses/ProblemBadRequest"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+        "409":
+          $ref: "#/components/responses/ProblemConflict"
+        "412":
+          $ref: "#/components/responses/ProblemPreconditionFailed"
+        "422":
+          $ref: "#/components/responses/ProblemUnprocessable"
+        "428":
+          $ref: "#/components/responses/ProblemPreconditionRequired"
+
+  /events/{id}/duplications:
+    post:
+      summary: Duplicate event configuration into a new draft
+      operationId: duplicateEvent
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Identifier of the source event to duplicate.
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+          description: Unique command idempotency token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventDuplicate"
+      responses:
+        "201":
+          description: Event successfully duplicated into a new draft (revision 1).
+          headers:
+            ETag:
+              schema:
+                type: string
+              description: Initial revision ETag ("1").
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventResponse"
+        "400":
+          $ref: "#/components/responses/ProblemBadRequest"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+        "409":
+          $ref: "#/components/responses/ProblemConflict"
+        "422":
+          $ref: "#/components/responses/ProblemUnprocessable"
+
+  /events/{id}/closures:
+    post:
+      summary: Close registrations for a published event
+      operationId: closeEvent
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+          description: Expected revision number ETag.
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+          description: Unique command idempotency token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, effective_at]
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+                effective_at:
+                  type: string
+                  format: date-time
+      responses:
+        "200":
+          description: Event registrations successfully closed.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventResponse"
+        "400":
+          $ref: "#/components/responses/ProblemBadRequest"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+        "409":
+          $ref: "#/components/responses/ProblemConflict"
+        "412":
+          $ref: "#/components/responses/ProblemPreconditionFailed"
+        "422":
+          $ref: "#/components/responses/ProblemUnprocessable"
+        "428":
+          $ref: "#/components/responses/ProblemPreconditionRequired"
+
+  /events/{id}/cancellations:
+    post:
+      summary: Cancel an event with reason and emit domain cancellation event
+      operationId: cancelEvent
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+          description: Expected revision number ETag.
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+          description: Unique command idempotency token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+                - effective_at
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+                  example: "Sede inaccesible por fuerza mayor."
+                effective_at:
+                  type: string
+                  format: date-time
+                  example: "2026-11-20T14:00:00Z"
+      responses:
+        "200":
+          description: Event successfully cancelled and domain cancellation queued in outbox.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventResponse"
+        "400":
+          $ref: "#/components/responses/ProblemBadRequest"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+        "409":
+          $ref: "#/components/responses/ProblemConflict"
+        "412":
+          $ref: "#/components/responses/ProblemPreconditionFailed"
+        "422":
+          $ref: "#/components/responses/ProblemUnprocessable"
+        "428":
+          $ref: "#/components/responses/ProblemPreconditionRequired"
+
+  /events/{id}/archives:
+    post:
+      summary: Archive a terminal event (closed or cancelled)
+      description: Requires events:write. The event must already be closed or cancelled.
+      operationId: archiveEvent
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+          description: Expected revision number ETag.
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+          description: Unique command idempotency token.
+      responses:
+        "200":
+          description: Event successfully archived.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventResponse"
+        "400":
+          $ref: "#/components/responses/ProblemBadRequest"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+        "409":
+          $ref: "#/components/responses/ProblemConflict"
+        "412":
+          $ref: "#/components/responses/ProblemPreconditionFailed"
+        "422":
+          $ref: "#/components/responses/ProblemUnprocessable"
+        "428":
+          $ref: "#/components/responses/ProblemPreconditionRequired"
+
+  /events/{id}/assignments:
+    get:
+      summary: List all role assignments for an event
+      operationId: listEventAssignments
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of assignments for this event.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AssignmentResponse"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+
+    post:
+      summary: Assign a responsible user to an event with role and scopes (EC-006)
+      operationId: createEventAssignment
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+          description: Unique command idempotency token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignmentCreate"
+      responses:
+        "201":
+          description: Assignment successfully created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssignmentResponse"
+        "400":
+          $ref: "#/components/responses/ProblemBadRequest"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+        "409":
+          $ref: "#/components/responses/ProblemConflict"
+        "422":
+          $ref: "#/components/responses/ProblemUnprocessable"
+
+  /events/{id}/assignments/{assignment_id}:
+    delete:
+      summary: Revoke an event role assignment (EC-006)
+      operationId: revokeEventAssignment
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: assignment_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+          description: Unique command idempotency token.
+      responses:
+        "200":
+          description: Assignment successfully revoked (is_active set to false).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssignmentResponse"
+        "400":
+          $ref: "#/components/responses/ProblemBadRequest"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+        "409":
+          $ref: "#/components/responses/ProblemConflict"
+
+  /events/{id}/publication-validations:
+    post:
+      summary: Check publication readiness across domain artifacts (EC-030)
+      operationId: validateEventPublication
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicationValidationCreate"
+      responses:
+        "200":
+          description: Readiness report detailing blocking errors and non-blocking warnings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessReport"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+
+  /events/{id}/releases:
+    get:
+      summary: List all publication releases for an event
+      operationId: listEventReleases
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of immutable publication releases.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReleaseResponse"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+
+    post:
+      summary: Assemble and publish an atomic release manifest (EC-031)
+      operationId: createEventRelease
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+          description: Expected current revision number ETag.
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+          description: Unique command idempotency token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReleaseCreate"
+      responses:
+        "201":
+          description: Release successfully published atomically.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReleaseResponse"
+        "400":
+          $ref: "#/components/responses/ProblemBadRequest"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+        "409":
+          $ref: "#/components/responses/ProblemConflict"
+        "412":
+          $ref: "#/components/responses/ProblemPreconditionFailed"
+        "422":
+          $ref: "#/components/responses/ProblemUnprocessable"
+        "428":
+          $ref: "#/components/responses/ProblemPreconditionRequired"
+
+  /events/{id}/releases/{release_id}:
+    get:
+      summary: Get publication release manifest and metadata by ID
+      operationId: getEventReleaseById
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: path
+          name: release_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Release details and full manifest.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReleaseResponse"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+
+  /events/{id}/releases/{release_id}/manifest:
+    get:
+      summary: Resolve an immutable release manifest reference
+      operationId: getReleaseManifest
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: release_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Immutable release manifest.
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+
+  /events/{id}/releases/{release_id}/manifest/artifacts/{kind}:
+    get:
+      summary: Resolve one immutable release artifact
+      operationId: getReleaseArtifact
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: release_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: kind
+          required: true
+          schema: { type: string, enum: [event, schedule, forms] }
+      responses:
+        "200":
+          description: Artifact metadata and stored body.
+          content:
+            application/json:
+              schema: { type: object }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+
+  /events/{id}/revisions:
+    get:
+      summary: List immutable event revisions
+      operationId: getEventRevisions
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Event revision history.
+          content:
+            application/json:
+              schema: { type: array, items: { type: object } }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+
+  /events/{id}/audit:
+    get:
+      summary: Get append-only audit trail for an event (EC-041)
+      operationId: getEventAuditTrail
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: List of immutable audit trail records for this event.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditRecord"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+
+  /events/{id}/history:
+    get:
+      summary: Get complete change history and revisions for an event (EC-041)
+      operationId: getEventHistory
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Complete chronological event revisions and audit records.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventHistoryResponse"
+        "401":
+          $ref: "#/components/responses/ProblemUnauthorized"
+        "403":
+          $ref: "#/components/responses/ProblemForbidden"
+        "404":
+          $ref: "#/components/responses/ProblemNotFound"
+
+  /venues:
+    get:
+      tags: [Schedule - EC-B]
+      summary: List active venues and rooms for the authenticated organization
+      description: Archived resources are excluded by default.
+      operationId: ecBApi001ListVenues
+      x-requirement-id: EC-B-API-001
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: Tenant-scoped venue page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VenueListResponse" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+    post:
+      tags: [Schedule - EC-B]
+      summary: Create a venue
+      operationId: ecBApi002CreateVenue
+      x-requirement-id: EC-B-API-002
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VenueWrite" }
+      responses:
+        "201":
+          description: Venue created.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VenueResponse" }
+        "400": { $ref: "#/components/responses/ProblemBadRequest" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "409": { $ref: "#/components/responses/ProblemConflict" }
+        "422": { $ref: "#/components/responses/ProblemUnprocessable" }
+
+  /venues/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Schedule - EC-B]
+      summary: Get a venue
+      operationId: ecBApi003GetVenue
+      x-requirement-id: EC-B-API-003
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      responses:
+        "200":
+          description: Venue found in the caller's organization.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VenueResponse" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+    patch:
+      tags: [Schedule - EC-B]
+      summary: Update a venue with optimistic concurrency
+      operationId: ecBApi004UpdateVenue
+      x-requirement-id: EC-B-API-004
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VenuePatch" }
+      responses:
+        "200":
+          description: Venue updated; ETag and revision advance.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VenueResponse" }
+        "400": { $ref: "#/components/responses/ProblemBadRequest" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "412": { $ref: "#/components/responses/ProblemPreconditionFailed" }
+        "422": { $ref: "#/components/responses/ProblemUnprocessable" }
+    delete:
+      tags: [Schedule - EC-B]
+      summary: Archive a venue or room without deleting its history
+      description: Sets archived_at; returns conflict while the resource has active reservations.
+      operationId: ecBApi020ArchiveVenue
+      x-requirement-id: EC-B-API-020
+      x-required-scope: events:write
+      x-lifecycle-behavior: soft_archive
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Venue archived; historical references are preserved. }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "409": { $ref: "#/components/responses/ProblemConflict" }
+        "412": { $ref: "#/components/responses/ProblemPreconditionFailed" }
+
+  /speakers:
+    get:
+      tags: [Schedule - EC-B]
+      summary: List speaker profiles for the authenticated organization
+      description: Archived profiles are excluded by default; profiles without active consent are never included in public release artifacts.
+      operationId: ecBApi005ListSpeakers
+      x-requirement-id: EC-B-API-005
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: Tenant-scoped speaker page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpeakerListResponse" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+    post:
+      tags: [Schedule - EC-B]
+      summary: Create a speaker profile
+      operationId: ecBApi006CreateSpeaker
+      x-requirement-id: EC-B-API-006
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SpeakerWrite" }
+      responses:
+        "201":
+          description: Speaker profile created.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpeakerResponse" }
+        "400": { $ref: "#/components/responses/ProblemBadRequest" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "409": { $ref: "#/components/responses/ProblemConflict" }
+        "422": { $ref: "#/components/responses/ProblemUnprocessable" }
+
+  /speakers/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Schedule - EC-B]
+      summary: Get a speaker profile
+      operationId: ecBApi007GetSpeaker
+      x-requirement-id: EC-B-API-007
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      responses:
+        "200":
+          description: Speaker profile found in the caller's organization.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpeakerResponse" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+    patch:
+      tags: [Schedule - EC-B]
+      summary: Update a speaker profile and consent
+      operationId: ecBApi008UpdateSpeaker
+      x-requirement-id: EC-B-API-008
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SpeakerPatch" }
+      responses:
+        "200":
+          description: Speaker profile updated.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpeakerResponse" }
+        "400": { $ref: "#/components/responses/ProblemBadRequest" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "412": { $ref: "#/components/responses/ProblemPreconditionFailed" }
+        "422": { $ref: "#/components/responses/ProblemUnprocessable" }
+    delete:
+      tags: [Schedule - EC-B]
+      summary: Archive a speaker profile without deleting its history
+      description: Sets archived_at; historical sessions and publications remain unchanged.
+      operationId: ecBApi021ArchiveSpeaker
+      x-requirement-id: EC-B-API-021
+      x-required-scope: events:write
+      x-lifecycle-behavior: soft_archive
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Speaker archived; historical references are preserved. }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "409": { $ref: "#/components/responses/ProblemConflict" }
+        "412": { $ref: "#/components/responses/ProblemPreconditionFailed" }
+
+  /events/{id}/programs:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Schedule - EC-B]
+      summary: List programs/tracks for an event
+      description: Archived programs are excluded by default.
+      operationId: ecBApi009ListPrograms
+      x-requirement-id: EC-B-API-009
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      responses:
+        "200":
+          description: Programs ordered by display_order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProgramListResponse" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+    post:
+      tags: [Schedule - EC-B]
+      summary: Create a program/track for an event
+      operationId: ecBApi010CreateProgram
+      x-requirement-id: EC-B-API-010
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProgramWrite" }
+      responses:
+        "201":
+          description: Program created.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProgramResponse" }
+        "400": { $ref: "#/components/responses/ProblemBadRequest" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "409": { $ref: "#/components/responses/ProblemConflict" }
+        "422": { $ref: "#/components/responses/ProblemUnprocessable" }
+
+  /events/{id}/programs/{program_id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+      - in: path
+        name: program_id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Schedule - EC-B]
+      summary: Get a program/track
+      operationId: ecBApi011GetProgram
+      x-requirement-id: EC-B-API-011
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      responses:
+        "200":
+          description: Program found.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProgramResponse" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+    patch:
+      tags: [Schedule - EC-B]
+      summary: Update program/track order and display data
+      operationId: ecBApi012UpdateProgram
+      x-requirement-id: EC-B-API-012
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProgramPatch" }
+      responses:
+        "200":
+          description: Program updated.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProgramResponse" }
+        "400": { $ref: "#/components/responses/ProblemBadRequest" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "409": { $ref: "#/components/responses/ProblemConflict" }
+        "412": { $ref: "#/components/responses/ProblemPreconditionFailed" }
+        "422": { $ref: "#/components/responses/ProblemUnprocessable" }
+    delete:
+      tags: [Schedule - EC-B]
+      summary: Archive a program without deleting its history
+      description: Sets archived_at; returns conflict while it has active sessions.
+      operationId: ecBApi022ArchiveProgram
+      x-requirement-id: EC-B-API-022
+      x-required-scope: events:write
+      x-lifecycle-behavior: soft_archive
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Program archived; historical references are preserved. }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "409": { $ref: "#/components/responses/ProblemConflict" }
+        "412": { $ref: "#/components/responses/ProblemPreconditionFailed" }
+
+  /events/{id}/sessions:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Schedule - EC-B]
+      summary: List event sessions for schedule and parallel-view rendering
+      operationId: ecBApi013ListSessions
+      x-requirement-id: EC-B-API-013
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: query
+          name: program_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: venue_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: starts_after
+          schema: { type: string, format: date-time }
+        - in: query
+          name: ends_before
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: Sessions ordered by start time and program order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionListResponse" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+    post:
+      tags: [Schedule - EC-B]
+      summary: Create a draft session
+      operationId: ecBApi014CreateSession
+      x-requirement-id: EC-B-API-014
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SessionWrite" }
+      responses:
+        "201":
+          description: Draft session created; exclusive resources are not reserved until it is scheduled.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionResponse" }
+        "400": { $ref: "#/components/responses/ProblemBadRequest" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "422": { $ref: "#/components/responses/ProblemUnprocessable" }
+
+  /events/{id}/sessions/{session_id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+      - in: path
+        name: session_id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      x-implementation-status: planned
+      tags: [Schedule - EC-B]
+      summary: Get an event session
+      operationId: ecBApi015GetSession
+      x-requirement-id: EC-B-API-015
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      responses:
+        "200":
+          description: Session found.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionResponse" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+    patch:
+      x-implementation-status: planned
+      tags: [Schedule - EC-B]
+      summary: Update or move a session using optimistic concurrency
+      operationId: ecBApi016UpdateSession
+      x-requirement-id: EC-B-API-016
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SessionPatch" }
+      responses:
+        "200":
+          description: Session updated and revision incremented.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionResponse" }
+        "400": { $ref: "#/components/responses/ProblemBadRequest" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "409":
+          description: Exclusive resource conflicts with the requested interval.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ScheduleConflictProblem" }
+        "412": { $ref: "#/components/responses/ProblemPreconditionFailed" }
+        "422": { $ref: "#/components/responses/ProblemUnprocessable" }
+
+  /events/{id}/sessions/{session_id}/cancellations:
+    post:
+      x-implementation-status: planned
+      tags: [Schedule - EC-B]
+      summary: Cancel a scheduled session
+      description: Proposed command route because the canonical API catalog specifies the lifecycle result but not the session-command path.
+      operationId: ecBApi018CancelSession
+      x-requirement-id: EC-B-API-018
+      x-proposed-route: true
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: session_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string }
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "200":
+          description: Session cancelled; reservations released and revision recorded.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionResponse" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "409": { $ref: "#/components/responses/ProblemConflict" }
+        "412": { $ref: "#/components/responses/ProblemPreconditionFailed" }
+        "422": { $ref: "#/components/responses/ProblemUnprocessable" }
+
+  /events/{id}/sessions/{session_id}/schedules:
+    post:
+      tags: [Schedule - EC-B]
+      summary: Schedule a draft session
+      description: >-
+        Performs the draft-to-scheduled transition. Validates the event window and all exclusive
+        resources, then persists reservations atomically with the session revision.
+      operationId: ecBApi023ScheduleSession
+      x-requirement-id: EC-B-API-023
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: session_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string }
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_event_revision]
+              properties:
+                expected_event_revision:
+                  type: integer
+                  minimum: 1
+                  description: Event revision returned by the Configuration event API; scheduling fails if the event snapshot has changed.
+      responses:
+        "200":
+          description: Session scheduled; exclusive resource reservations are committed.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionResponse" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "409":
+          description: Invalid session state or exclusive-resource conflict prevents scheduling.
+          content:
+            application/problem+json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ScheduleConflictProblem"
+                  - $ref: "#/components/schemas/ProblemDetails"
+        "412": { $ref: "#/components/responses/ProblemPreconditionFailed" }
+        "422":
+          description: Session time falls outside the event window or references are invalid; the draft remains unchanged.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/ProblemDetails" }
+
+  /events/{id}/sessions/{session_id}/completions:
+    post:
+      x-implementation-status: planned
+      tags: [Schedule - EC-B]
+      summary: Mark a scheduled session as completed
+      description: Proposed command route because the canonical API catalog specifies the lifecycle result but not the session-command path.
+      operationId: ecBApi019CompleteSession
+      x-requirement-id: EC-B-API-019
+      x-proposed-route: true
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: session_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string }
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: Session completed and revision recorded.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionResponse" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "409": { $ref: "#/components/responses/ProblemConflict" }
+        "412": { $ref: "#/components/responses/ProblemPreconditionFailed" }
+        "422": { $ref: "#/components/responses/ProblemUnprocessable" }
+
+  /events/{id}/schedule-validations:
+    post:
+      tags: [Schedule - EC-B]
+      summary: Validate a batch of candidate sessions against the persisted agenda without persisting it
+      description: candidate_sessions is an additive batch of proposed sessions; already scheduled sessions remain in place and are checked as occupied resources.
+      operationId: ecBApi017ValidateSchedule
+      x-requirement-id: EC-B-API-017
+      x-required-scope: events:write
+      security:
+        - BearerAuth: []
+        - DevActor: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ScheduleValidationRequest" }
+      responses:
+        "200":
+          description: Blocking conflicts and non-blocking warnings for the proposed schedule.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduleValidationResponse" }
+        "400": { $ref: "#/components/responses/ProblemBadRequest" }
+        "401": { $ref: "#/components/responses/ProblemUnauthorized" }
+        "403": { $ref: "#/components/responses/ProblemForbidden" }
+        "404": { $ref: "#/components/responses/ProblemNotFound" }
+        "422": { $ref: "#/components/responses/ProblemUnprocessable" }
+
+components:
+  securitySchemes:
+    DevActor:
+      type: apiKey
+      in: header
+      name: x-dev-actor
+      description: Local development actor fixture. Never use outside the development profile.
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Verified token with the Configuration API audience. DevActor is accepted only by the local development profile.
+
+  schemas:
+    FormsDraftInput:
+      type: object
+      additionalProperties: false
+      required: [schema, ui_schema, consent, field_policies]
+      properties:
+        schema: { type: object, description: JSON Schema 2020-12 con subconjunto permitido. }
+        ui_schema: { type: object, description: UI declarativa; no se permite código. }
+        consent: { type: object, required: [text, version], properties: { text: { type: string }, version: { type: string } } }
+        field_policies: { type: object, description: Políticas por campo; requiere purpose, classification, retention y export_allowlist. }
+    EventCreate:
+      type: object
+      required:
+        - site_id
+        - slug
+        - kind
+        - title
+        - timezone
+        - starts_at
+        - ends_at
+      properties:
+        site_id:
+          type: string
+          format: uuid
+          example: "0194eb45-d881-7f93-9c5f-3c81eef671d1"
+        slug:
+          type: string
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          maxLength: 120
+          example: "cloud-summit-2026"
+        kind:
+          type: string
+          example: "conference"
+        title:
+          type: string
+          maxLength: 255
+          example: "Cloud Summit 2026"
+        description:
+          type: [string, "null"]
+          example: "Conferencia anual sobre arquitecturas distribuidas y cloud computing."
+        timezone:
+          type: string
+          example: "America/Lima"
+        starts_at:
+          type: string
+          format: date-time
+          example: "2026-11-20T14:00:00Z"
+        ends_at:
+          type: string
+          format: date-time
+          example: "2026-11-22T23:00:00Z"
+        policy:
+          type: object
+          default: {}
+          example:
+            registration:
+              requires_approval: false
+              capacity_limit_type: "unlimited"
+        metadata:
+          type: object
+          default: {}
+
+    EventUpdate:
+      type: object
+      properties:
+        slug:
+          type: string
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          maxLength: 120
+          example: "cloud-summit-2026-updated"
+        kind:
+          type: string
+          example: "conference"
+        title:
+          type: string
+          maxLength: 255
+          example: "Cloud Summit 2026 (Updated)"
+        description:
+          type: [string, "null"]
+        timezone:
+          type: string
+          example: "America/Lima"
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+        policy:
+          type: object
+        metadata:
+          type: object
+        change_summary:
+          type: string
+          maxLength: 500
+          example: "Actualización de títulos y políticas de registro."
+
+    EventDuplicate:
+      type: object
+      required:
+        - slug
+        - site_id
+        - starts_at
+        - ends_at
+      properties:
+        slug:
+          type: string
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          maxLength: 120
+          example: "cloud-summit-2027"
+        starts_at:
+          type: string
+          format: date-time
+          example: "2027-11-20T14:00:00Z"
+        ends_at:
+          type: string
+          format: date-time
+          example: "2027-11-22T23:00:00Z"
+        site_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          maxLength: 255
+          example: "Cloud Summit 2027"
+        description:
+          type: [string, "null"]
+        metadata:
+          type: object
+
+    EventResponse:
+      type: object
+      required:
+        - id
+        - organization_id
+        - site_id
+        - slug
+        - kind
+        - title
+        - timezone
+        - starts_at
+        - ends_at
+        - status
+        - revision_number
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        site_id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        kind:
+          type: string
+        title:
+          type: string
+        description:
+          type: [string, "null"]
+        timezone:
+          type: string
+        starts_at:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [draft, published, closed, cancelled, archived]
+        current_revision_id:
+          type: [string, "null"]
+          format: uuid
+        revision_number:
+          type: integer
+          example: 1
+        policy:
+          type: object
+        metadata:
+          type: object
+        cancellation_reason:
+          type: [string, "null"]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    EventListResponse:
+      type: object
+      required:
+        - items
+        - page_info
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventResponse"
+        page_info:
+          type: object
+          required:
+            - has_next_page
+            - next_cursor
+          properties:
+            has_next_page:
+              type: boolean
+            next_cursor:
+              type: [string, "null"]
+
+    AssignmentCreate:
+      type: object
+      required:
+        - user_id
+        - role
+        - scopes
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          example: "0194eb00-0000-7000-9000-000000000002"
+        role:
+          type: string
+          maxLength: 50
+          example: "speaker-coordinator"
+        scopes:
+          type: array
+          items:
+            type: string
+          example: ["events:write"]
+        valid_from:
+          type: string
+          format: date-time
+          example: "2026-11-20T00:00:00Z"
+        valid_to:
+          type: string
+          format: date-time
+          example: "2026-11-23T00:00:00Z"
+        site_id:
+          type: string
+          format: uuid
+
+    AssignmentResponse:
+      type: object
+      required:
+        - id
+        - organization_id
+        - event_id
+        - user_id
+        - role
+        - scopes
+        - valid_from
+        - is_active
+        - created_by
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        event_id:
+          type: [string, "null"]
+          format: uuid
+        site_id:
+          type: [string, "null"]
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        valid_from:
+          type: string
+          format: date-time
+        valid_to:
+          type: [string, "null"]
+          format: date-time
+        is_active:
+          type: boolean
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ReadinessReport:
+      type: object
+      required:
+        - is_ready
+        - event_id
+        - organization_id
+        - expected_revision
+        - errors
+        - warnings
+        - checked_at
+      properties:
+        is_ready:
+          type: boolean
+        event_id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        expected_revision:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        checked_at:
+          type: string
+          format: date-time
+
+    PublicationValidationCreate:
+      type: object
+      required:
+        - expected_event_revision
+      properties:
+        expected_event_revision:
+          type: integer
+          minimum: 1
+
+    ReleaseCreate:
+      type: object
+      required:
+        - expected_event_revision
+      properties:
+        expected_event_revision:
+          type: integer
+          minimum: 1
+        effective_at:
+          type: string
+          format: date-time
+          example: "2026-11-20T14:00:00Z"
+
+    ReleaseResponse:
+      type: object
+      required:
+        - id
+        - organization_id
+        - event_id
+        - release_version
+        - effective_at
+        - manifest_ref
+        - manifest_hash
+        - manifest
+        - event_revision_number
+        - status
+        - created_by
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        event_id:
+          type: string
+          format: uuid
+        release_version:
+          type: integer
+          minimum: 1
+        effective_at:
+          type: string
+          format: date-time
+        manifest_ref:
+          type: string
+        manifest_hash:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        manifest:
+          type: object
+        event_revision_number:
+          type: integer
+        status:
+          type: string
+          enum: [published, superseded, cancelled]
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    AuditRecord:
+      type: object
+      required:
+        - id
+        - organization_id
+        - entity_type
+        - entity_id
+        - action
+        - actor_id
+        - actor_roles
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+        actor_id:
+          type: string
+        actor_roles:
+          type: array
+          items:
+            type: string
+        request_id:
+          type: [string, "null"]
+        idempotency_key:
+          type: [string, "null"]
+        revision_number:
+          type: [integer, "null"]
+        diff:
+          type: [object, "null"]
+        payload_hash:
+          type: [string, "null"]
+          pattern: "^[a-f0-9]{64}$"
+        client_ip:
+          type: [string, "null"]
+        user_agent:
+          type: [string, "null"]
+        created_at:
+          type: string
+          format: date-time
+
+    EventHistoryResponse:
+      type: object
+      required:
+        - event_id
+        - organization_id
+        - current_revision
+        - revisions
+        - audit_trail
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        current_revision:
+          type: integer
+        revisions:
+          type: array
+          items:
+            type: object
+        audit_trail:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditRecord"
+
+    VenueWrite:
+      type: object
+      additionalProperties: false
+      required: [kind, name, location, exclusive]
+      allOf:
+        - if:
+            properties:
+              kind: { const: room }
+            required: [kind]
+          then:
+            required: [parent_venue_id]
+            properties:
+              parent_venue_id:
+                type: string
+                format: uuid
+      properties:
+        kind:
+          type: string
+          enum: [venue, room]
+          description: A reservable place or a room belonging to a parent venue.
+        parent_venue_id:
+          type: string
+          format: uuid
+          description: Required for kind=room; must reference a venue in this organization.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 180
+        location:
+          $ref: "#/components/schemas/VenueLocation"
+        capacity:
+          type: integer
+          minimum: 1
+          description: Optional maximum attendee capacity.
+        exclusive:
+          type: boolean
+        accessibility:
+          type: array
+          description: Accessibility features supported by the venue.
+          items:
+            type: string
+            maxLength: 80
+
+    VenuePatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        kind: { type: string, enum: [venue, room] }
+        parent_venue_id: { type: [string, "null"], format: uuid }
+        name: { type: string, minLength: 1, maxLength: 180 }
+        location: { $ref: "#/components/schemas/VenueLocation" }
+        capacity: { type: integer, minimum: 1 }
+        exclusive: { type: boolean }
+        accessibility:
+          type: array
+          items: { type: string, maxLength: 80 }
+
+    VenueResponse:
+      type: object
+      required: [id, organization_id, kind, parent_venue_id, name, location, capacity, exclusive, accessibility, archived_at, revision, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        kind: { type: string, enum: [venue, room] }
+        parent_venue_id: { type: [string, "null"], format: uuid }
+        name: { type: string }
+        location: { $ref: "#/components/schemas/VenueLocation" }
+        capacity: { type: [integer, "null"], minimum: 1 }
+        exclusive: { type: boolean }
+        accessibility:
+          type: array
+          items: { type: string }
+        archived_at: { type: [string, "null"], format: date-time }
+        revision: { type: integer, format: int64, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    VenueListResponse:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/VenueResponse" }
+        next_cursor:
+          type: [string, "null"]
+
+    VenueLocation:
+      type: object
+      additionalProperties: false
+      required: [address]
+      properties:
+        address: { type: string, minLength: 1, maxLength: 240 }
+        locality: { type: string, maxLength: 120 }
+        region: { type: string, maxLength: 120 }
+        country_code:
+          type: string
+          pattern: "^[A-Z]{2}$"
+          description: ISO 3166-1 alpha-2 code.
+        postal_code: { type: string, maxLength: 24 }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+
+    SpeakerWrite:
+      type: object
+      additionalProperties: false
+      required: [display_name, public_consent]
+      allOf:
+        - if:
+            properties:
+              public_consent: { const: true }
+            required: [public_consent]
+          then:
+            required: [public_consent_version]
+            properties:
+              public_consent_version:
+                type: string
+                minLength: 1
+                maxLength: 80
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 180 }
+        bio: { type: string, maxLength: 5000 }
+        media_ref:
+          type: string
+          maxLength: 500
+          description: Reference to media managed by the media owner; no binary content is accepted here.
+        public_consent:
+          type: boolean
+          description: False keeps the profile out of public artifacts; true accepts the active notice and requires its server-issued version.
+        public_consent_version:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Required only with public_consent=true; the service rejects this field when revoking consent or when the version is stale or unknown.
+        exclusive: { type: boolean, default: false }
+
+    SpeakerPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      allOf:
+        - if:
+            properties:
+              public_consent: { const: true }
+            required: [public_consent]
+          then:
+            required: [public_consent_version]
+            properties:
+              public_consent_version:
+                type: string
+                minLength: 1
+                maxLength: 80
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 180 }
+        bio: { type: string, maxLength: 5000 }
+        media_ref: { type: string, maxLength: 500 }
+        public_consent:
+          type: boolean
+          description: Set false to revoke consent. Setting true requires the active public_consent_version.
+        public_consent_version: { type: string, minLength: 1, maxLength: 80 }
+        exclusive: { type: boolean }
+
+    SpeakerResponse:
+      type: object
+      required: [id, organization_id, display_name, bio, media_ref, public_consent, public_consent_at, public_consent_version, exclusive, archived_at, revision, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        display_name: { type: string }
+        bio: { type: [string, "null"] }
+        media_ref: { type: [string, "null"] }
+        public_consent: { type: boolean }
+        public_consent_at: { type: [string, "null"], format: date-time }
+        public_consent_version: { type: [string, "null"], maxLength: 80 }
+        exclusive: { type: boolean }
+        archived_at: { type: [string, "null"], format: date-time }
+        revision: { type: integer, format: int64, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SpeakerListResponse:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SpeakerResponse" }
+        next_cursor:
+          type: [string, "null"]
+
+    ProgramWrite:
+      type: object
+      additionalProperties: false
+      required: [slug, name, display_order]
+      properties:
+        slug:
+          type: string
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          maxLength: 100
+        name: { type: string, minLength: 1, maxLength: 180 }
+        description: { type: string, maxLength: 3000 }
+        display_order: { type: integer, minimum: 0 }
+        color:
+          type: string
+          pattern: "^#[0-9A-Fa-f]{6}$"
+          description: >-
+            A foreground or track marker color on a white agenda canvas. The service must reject
+            values with WCAG contrast ratio below 4.5:1 against #FFFFFF. Clients must not be the
+            only enforcement point.
+
+    ProgramPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        slug:
+          type: string
+          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          maxLength: 100
+        name: { type: string, minLength: 1, maxLength: 180 }
+        description: { type: string, maxLength: 3000 }
+        display_order: { type: integer, minimum: 0 }
+        color:
+          type: string
+          pattern: "^#[0-9A-Fa-f]{6}$"
+          description: Must have WCAG contrast ratio of at least 4.5:1 against #FFFFFF.
+
+    ProgramResponse:
+      type: object
+      required: [id, organization_id, event_id, slug, name, description, display_order, color, archived_at, revision, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: [string, "null"] }
+        display_order: { type: integer, minimum: 0 }
+        color: { type: [string, "null"] }
+        archived_at: { type: [string, "null"], format: date-time }
+        revision: { type: integer, format: int64, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProgramListResponse:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ProgramResponse" }
+        next_cursor:
+          type: [string, "null"]
+
+    SessionWrite:
+      type: object
+      additionalProperties: false
+      required: [program_id, title, starts_at, ends_at, venue_id]
+      description: A new session starts in draft. The caller cannot set status. Draft sessions do not reserve exclusive resources until scheduled.
+      properties:
+        program_id: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 220 }
+        description: { type: string, maxLength: 5000 }
+        starts_at: { type: string, format: date-time, description: RFC 3339 instant normalized to UTC for storage. }
+        ends_at: { type: string, format: date-time, description: RFC 3339 instant normalized to UTC for storage. }
+        venue_id: { type: string, format: uuid }
+        speaker_ids:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items: { type: string, format: uuid }
+          description: >-
+            Optional speaker profiles associated to this draft session. Every speaker must be active
+            in the authenticated organization; exclusive speakers are reserved when the session is scheduled.
+
+    SessionPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        program_id: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 220 }
+        description: { type: string, maxLength: 5000 }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        venue_id: { type: string, format: uuid }
+        speaker_ids:
+          type: array
+          uniqueItems: true
+          items: { type: string, format: uuid }
+
+    SessionResponse:
+      type: object
+      required: [id, organization_id, event_id, program_id, title, description, starts_at, ends_at, timezone, venue_id, speaker_ids, status, status_reason, revision, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        event_id: { type: string, format: uuid }
+        program_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: [string, "null"] }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        timezone:
+          type: string
+          description: "IANA timezone from the parent event, for presentation only."
+        venue_id: { type: string, format: uuid }
+        speaker_ids:
+          type: array
+          items: { type: string, format: uuid }
+        status: { type: string, enum: [draft, scheduled, cancelled, completed] }
+        status_reason: { type: [string, "null"] }
+        revision: { type: integer, format: int64, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SessionListResponse:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SessionResponse" }
+        next_cursor:
+          type: [string, "null"]
+
+    ScheduleValidationRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_event_revision, candidate_sessions]
+      properties:
+        expected_event_revision:
+          type: integer
+          minimum: 1
+          description: Event revision from the existing Configuration event resource; not a schedule revision.
+        candidate_sessions:
+          type: array
+          maxItems: 500
+          description: New candidate sessions to check together and against already scheduled sessions. This preview does not replace existing sessions.
+          items: { $ref: "#/components/schemas/SessionWrite" }
+
+    ScheduleConflict:
+      type: object
+      required: [resource_type, resource_id, starts_at, ends_at]
+      properties:
+        resource_type: { type: string, enum: [venue, speaker] }
+        resource_id: { type: string, format: uuid }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        session_id: { type: [string, "null"], format: uuid }
+        candidate_index: { type: integer, minimum: 0, description: Index of the candidate session in the request when this conflict concerns a candidate. }
+        conflicting_candidate_index: { type: integer, minimum: 0, description: Index of the other candidate when two proposed sessions conflict. }
+
+    ScheduleValidationResponse:
+      type: object
+      required: [event_id, expected_event_revision, is_valid, conflicts, errors, warnings]
+      properties:
+        event_id: { type: string, format: uuid }
+        expected_event_revision: { type: integer, minimum: 1 }
+        is_valid: { type: boolean }
+        conflicts:
+          type: array
+          items: { $ref: "#/components/schemas/ScheduleConflict" }
+        errors:
+          type: array
+          items: { type: string }
+        warnings:
+          type: array
+          items: { type: string }
+
+    ScheduleConflictProblem:
+      allOf:
+        - $ref: "#/components/schemas/ProblemDetails"
+        - type: object
+          required: [conflicts]
+          properties:
+            conflicts:
+              type: array
+              items: { $ref: "#/components/schemas/ScheduleConflict" }
+
+    ProblemDetails:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - code
+        - detail
+        - request_id
+        - errors
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        code:
+          type: string
+        request_id:
+          type: string
+          format: uuid
+        errors:
+          type: array
+          items:
+            type: object
+            required: [pointer, code, message]
+            properties:
+              pointer:
+                type: string
+              code:
+                type: string
+              message:
+                type: string
+
+  responses:
+    ProblemBadRequest:
+      description: Bad Request (Invalid parameters / Schema mismatch)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    ProblemUnauthorized:
+      description: Unauthorized (Token missing or invalid)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    ProblemForbidden:
+      description: Forbidden (Scope insufficient or tenant mismatch)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    ProblemNotFound:
+      description: Resource Not Found
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    ProblemConflict:
+      description: Conflict (Idempotency conflict or concurrent modification)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    ProblemPreconditionFailed:
+      description: Precondition Failed (ETag / If-Match revision mismatch)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    ProblemUnprocessable:
+      description: Unprocessable Content (Domain rule validation failed)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+    ProblemPreconditionRequired:
+      description: Precondition Required (If-Match header is required)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"

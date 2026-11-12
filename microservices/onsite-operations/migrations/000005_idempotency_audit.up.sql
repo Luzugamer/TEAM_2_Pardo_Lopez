@@ -1,0 +1,3 @@
+CREATE TABLE onsite.idempotency_records(key text NOT NULL,actor_id uuid NOT NULL,request_hash text NOT NULL,status_code int NOT NULL,response_body jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(key,actor_id));
+CREATE TABLE onsite.audit_log(id uuid PRIMARY KEY,tenant_id uuid NOT NULL,actor_id uuid NOT NULL,action text NOT NULL,resource_type text NOT NULL,resource_id text NOT NULL,trace_id text NOT NULL,metadata jsonb NOT NULL DEFAULT '{}',occurred_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX audit_resource ON onsite.audit_log(resource_type,resource_id,occurred_at DESC);

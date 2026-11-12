@@ -1,0 +1,24 @@
+import {test,expect} from '@playwright/test';
+test('crea y publica un formulario en Configuration aislada',async({page})=>{
+  test.skip(!process.env.EVENTS_LIVE_API,'Requiere API aislada de formularios.');
+  await page.addInitScript(()=>sessionStorage.setItem('nexo.session',JSON.stringify({access_token:'test',refresh_token:'test',expires_at:4102444800,profile:{id:'u',name:'Owner',email:'owner@example.test'},tenants:[{id:'t',name:'Organización demo',slug:'demo',created_at:'2026-01-01T00:00:00Z'}]})));
+  await page.route('**/v1/navigation/sidebar**',route=>route.fulfill({json:{items:[{id:'overview'}],role:'owner'}}));
+  await page.goto('/events/forms');
+  await expect(page.getByRole('heading',{name:'Formularios y vínculos'})).toBeVisible();
+  await page.getByLabel('Nombre del formulario').fill(`Registro UI ${Date.now()}`);
+  await page.getByRole('button',{name:'Crear formulario'}).click();
+  await expect(page.getByLabel('Texto de consentimiento')).toBeVisible();
+  await page.getByLabel('Texto de consentimiento').fill('Aviso ficticio de prueba');
+  await page.getByLabel('Versión del consentimiento').fill('demo-1');
+  await page.getByLabel('Finalidad del campo').fill('inscripción');
+  await page.getByLabel('Referencia de retención').fill('politica-demo');
+  await page.getByRole('button',{name:'Agregar otro campo'}).click();
+  await page.getByLabel('Identificador del campo').fill('correo');
+  await page.getByLabel('Etiqueta del campo').fill('Correo');
+  await expect(page.getByText('Vista previa')).toBeVisible();
+  await page.getByRole('button',{name:'Crear versión borrador'}).click();
+  await expect(page.getByRole('button',{name:'Validar y publicar formulario'})).toBeVisible();
+  await page.getByRole('button',{name:'Validar y publicar formulario'}).click();
+  await expect(page.getByText('Operación completada.')).toBeVisible();
+  await expect(page.getByLabel('Versión', { exact: true })).toContainText('published');
+});

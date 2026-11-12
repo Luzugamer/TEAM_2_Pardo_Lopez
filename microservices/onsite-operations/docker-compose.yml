@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nexo_onsite
+      POSTGRES_USER: nexo_onsite
+      POSTGRES_PASSWORD: nexo_onsite
+    ports: ["5434:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexo_onsite -d nexo_onsite"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+  migrate:
+    image: migrate/migrate:v4.18.3
+    depends_on:
+      postgres: {condition: service_healthy}
+    volumes:
+      - ./migrations:/migrations:ro
+    command: ["-path=/migrations", "-database=postgres://nexo_onsite:nexo_onsite@postgres:5432/nexo_onsite?sslmode=disable", "up"]
+  seed:
+    image: postgres:16-alpine
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    volumes:
+      - ./seeds:/seeds:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["psql postgres://nexo_onsite:nexo_onsite@postgres:5432/nexo_onsite?sslmode=disable -f /seeds/demo-day.sql -f /seeds/demo-day-presence.sql"]
+  api:
+    build: .
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://nexo_onsite:nexo_onsite@postgres:5432/nexo_onsite?sslmode=disable
+    ports: ["8082:8082"]
+    depends_on:
+      seed: {condition: service_completed_successfully}

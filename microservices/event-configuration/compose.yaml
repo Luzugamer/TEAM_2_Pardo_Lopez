@@ -1,0 +1,148 @@
+name: nexo-events-local-fixture
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-event_configuration}
+      POSTGRES_USER: ${POSTGRES_USER:-configuration_migrator}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env}
+    ports:
+      - "127.0.0.1:${DB_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  bootstrap-local:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["node", "scripts/bootstrap-local.mjs"]
+    environment:
+      LOCAL_BOOTSTRAP_CONFIRM: isolated-development-only
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-event_configuration}
+      POSTGRES_USER: ${POSTGRES_USER:-configuration_migrator}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env}
+      EVENTS_MIGRATOR_USER: ${EVENTS_MIGRATOR_USER:-events_migrator}
+      EVENTS_MIGRATOR_PASSWORD: ${EVENTS_MIGRATOR_PASSWORD:-${POSTGRES_PASSWORD}}
+      APP_DB_USER: ${APP_DB_USER:-configuration_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Define APP_DB_PASSWORD en .env}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["node", "scripts/migrate.mjs"]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-event_configuration}
+      EVENTS_MIGRATOR_USER: ${EVENTS_MIGRATOR_USER:-events_migrator}
+      EVENTS_MIGRATOR_PASSWORD: ${EVENTS_MIGRATOR_PASSWORD:-${POSTGRES_PASSWORD}}
+      APP_DB_USER: ${APP_DB_USER:-configuration_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Define APP_DB_PASSWORD en .env}
+    depends_on:
+      bootstrap-local:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-event_configuration}
+      POSTGRES_USER: ${APP_DB_USER:-configuration_app}
+      POSTGRES_PASSWORD: ${APP_DB_PASSWORD:?Define APP_DB_PASSWORD en .env}
+      NODE_ENV: development
+      AUTH_MODE: mock
+      MEMBERSHIP_MODE: mock
+      PORT: "3000"
+      SPEAKER_CONSENT_NOTICE_TEXT: ${SPEAKER_CONSENT_NOTICE_TEXT:-}
+      SPEAKER_CONSENT_NOTICE_VERSION: ${SPEAKER_CONSENT_NOTICE_VERSION:-}
+    ports:
+      - "127.0.0.1:${API_PORT:-3000}:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/configuration/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  admin:
+    build:
+      context: .
+      dockerfile: apps/configuration-admin/Dockerfile
+    ports:
+      - "127.0.0.1:${ADMIN_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["node", "apps/configuration-worker/src/main.mjs"]
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:-event_configuration}
+      POSTGRES_USER: ${APP_DB_USER:-configuration_app}
+      POSTGRES_PASSWORD: ${APP_DB_PASSWORD:?Define APP_DB_PASSWORD en .env}
+      NODE_ENV: development
+      BROKER_MODE: simulator
+      WORKER_HEARTBEAT_FILE: /tmp/worker-heartbeat
+      WORKER_TENANT_IDS: ${WORKER_TENANT_IDS:-0194eb00-0000-7000-8000-000000000001,0194eb00-0000-7000-8000-000000000002}
+      WORKER_POLL_INTERVAL_MS: ${WORKER_POLL_INTERVAL_MS:-1000}
+      WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-10}
+      WORKER_LEASE_SECONDS: ${WORKER_LEASE_SECONDS:-60}
+      WORKER_MAX_BACKOFF_SECONDS: ${WORKER_MAX_BACKOFF_SECONDS:-300}
+      SIMULATOR_FAIL_FIRST_N: ${SIMULATOR_FAIL_FIRST_N:-0}
+      SIMULATOR_FAIL_EVERY_N: ${SIMULATOR_FAIL_EVERY_N:-0}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const fs = require('node:fs'); const file = process.env.WORKER_HEARTBEAT_FILE || '/tmp/worker-heartbeat'; const ts = Number(fs.readFileSync(file, 'utf8')); process.exit(Number.isFinite(ts) && Date.now() - ts < 30000 ? 0 : 1);"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
