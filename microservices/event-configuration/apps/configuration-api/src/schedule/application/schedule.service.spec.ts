@@ -55,6 +55,11 @@ describe('ScheduleService — Etapa 1', () => {
     createVenueReservation: ReturnType<typeof vi.fn>;
     createDraftSession: ReturnType<typeof vi.fn>;
     reserveExclusiveSpeakers: ReturnType<typeof vi.fn>;
+    findSessionWithSpeakers: ReturnType<typeof vi.fn>;
+    updateSession: ReturnType<typeof vi.fn>;
+    cancelSession: ReturnType<typeof vi.fn>;
+    completeSession: ReturnType<typeof vi.fn>;
+    releaseSessionReservations: ReturnType<typeof vi.fn>;
   };
   let eventsService: { readEventSnapshot: ReturnType<typeof vi.fn> };
   let databaseService: { withSerializableTransaction: ReturnType<typeof vi.fn> };
@@ -75,6 +80,11 @@ describe('ScheduleService — Etapa 1', () => {
       createVenueReservation: vi.fn().mockResolvedValue(undefined),
       createDraftSession: vi.fn().mockResolvedValue(draftSession),
       reserveExclusiveSpeakers: vi.fn().mockResolvedValue(undefined),
+      findSessionWithSpeakers: vi.fn().mockResolvedValue(draftSession),
+      updateSession: vi.fn().mockResolvedValue({ ...draftSession, revision: 2 }),
+      cancelSession: vi.fn().mockResolvedValue({ ...draftSession, status: 'cancelled', revision: 2, status_reason: 'Speaker unavailable' }),
+      completeSession: vi.fn().mockResolvedValue({ ...draftSession, status: 'completed', revision: 2 }),
+      releaseSessionReservations: vi.fn().mockResolvedValue(undefined),
     };
     eventsService = {
       readEventSnapshot: vi.fn().mockResolvedValue({ snapshot: event, hash: 'event-hash' }),
@@ -233,5 +243,154 @@ describe('ScheduleService — Etapa 1', () => {
       });
       expect(JSON.stringify((error as DomainException).problem)).not.toContain('Opening session');
     }
+  });
+
+  describe('Session Lifecycle (EC-014)', () => {
+    it('gets session detail with speaker ids', async () => {
+      repository.findSessionWithSpeakers.mockResolvedValue({
+        ...draftSession,
+        speaker_ids: ['speaker-1', 'speaker-2'],
+      });
+
+      const session = await service.getSession(claims, event.id, draftSession.id);
+      expect(session.id).toBe(draftSession.id);
+      expect(session.speaker_ids).toEqual(['speaker-1', 'speaker-2']);
+      expect(repository.findSessionWithSpeakers).toHaveBeenCalledWith(
+        claims.organization_id,
+        event.id,
+        draftSession.id,
+        event.timezone,
+      );
+    });
+
+    it('throws 404 if session is not found in getSession', async () => {
+      repository.findSessionWithSpeakers.mockResolvedValue(null);
+
+      await expect(service.getSession(claims, event.id, 'non-existent')).rejects.toMatchObject({
+        problem: { status: 404, code: 'session_not_found' },
+      });
+    });
+
+    it('patches a draft session successfully with revision increment', async () => {
+      const result = await service.patchSession(claims, event.id, draftSession.id, 1, {
+        title: 'Updated Title',
+      }, {});
+
+      expect(repository.updateSession).toHaveBeenCalledWith(
+        claims.organization_id,
+        event.id,
+        draftSession.id,
+        1,
+        expect.anything(),
+        { title: 'Updated Title' },
+        event.timezone,
+      );
+      expect(result.revision).toBe(2);
+    });
+
+    it('throws 412 on patchSession when revision mismatches', async () => {
+      await expect(
+        service.patchSession(claims, event.id, draftSession.id, 999, { title: 'Updated' }, {}),
+      ).rejects.toMatchObject({
+        problem: { status: 412 },
+      });
+    });
+
+    it('throws 409 on patchSession when session is already cancelled', async () => {
+      repository.findSessionWithSpeakers.mockResolvedValue({
+        ...draftSession,
+        status: 'cancelled',
+      });
+
+      await expect(
+        service.patchSession(claims, event.id, draftSession.id, 1, { title: 'Updated' }, {}),
+      ).rejects.toMatchObject({
+        problem: { status: 409, code: 'session_terminal_state' },
+      });
+    });
+
+    it('patches a scheduled session, releasing prior reservations and recalculating', async () => {
+      const scheduledSession = {
+        ...draftSession,
+        status: 'scheduled',
+      };
+      repository.findSessionWithSpeakers.mockResolvedValue(scheduledSession);
+
+      const result = await service.patchSession(claims, event.id, draftSession.id, 1, {
+        title: 'Updated Scheduled Title',
+      }, {});
+
+      expect(repository.releaseSessionReservations).toHaveBeenCalledWith(
+        claims.organization_id,
+        event.id,
+        draftSession.id,
+      );
+      expect(repository.updateSession).toHaveBeenCalled();
+      expect(repository.createVenueReservation).toHaveBeenCalled();
+      expect(result.revision).toBe(2);
+    });
+
+    it('cancels a session with reason and releases active reservations', async () => {
+      const result = await service.cancelSession(claims, event.id, draftSession.id, 1, {
+        reason: 'Keynote speaker fell ill',
+      }, {});
+
+      expect(repository.cancelSession).toHaveBeenCalledWith(
+        claims.organization_id,
+        event.id,
+        draftSession.id,
+        1,
+        'Keynote speaker fell ill',
+        expect.anything(),
+        event.timezone,
+      );
+      expect(result.status).toBe('cancelled');
+    });
+
+    it('throws 409 on cancelSession when already completed or cancelled', async () => {
+      repository.findSession.mockResolvedValue({
+        ...draftSession,
+        status: 'completed',
+      });
+
+      await expect(
+        service.cancelSession(claims, event.id, draftSession.id, 1, { reason: 'Test' }, {}),
+      ).rejects.toMatchObject({
+        problem: { status: 409, code: 'session_terminal_state' },
+      });
+    });
+
+    it('completes a scheduled session successfully', async () => {
+      repository.findSession.mockResolvedValue({
+        ...draftSession,
+        status: 'scheduled',
+      });
+
+      const result = await service.completeSession(claims, event.id, draftSession.id, 1, {}, {});
+
+      expect(repository.completeSession).toHaveBeenCalledWith(
+        claims.organization_id,
+        event.id,
+        draftSession.id,
+        1,
+        null,
+        expect.anything(),
+        event.timezone,
+      );
+      expect(result.status).toBe('completed');
+    });
+
+    it('throws 409 on completeSession when session is not scheduled (e.g. draft)', async () => {
+      repository.findSession.mockResolvedValue({
+        ...draftSession,
+        status: 'draft',
+      });
+
+      await expect(
+        service.completeSession(claims, event.id, draftSession.id, 1, {}, {}),
+      ).rejects.toMatchObject({
+        problem: { status: 409, code: 'invalid_state_transition' },
+      });
+    });
   });
 });

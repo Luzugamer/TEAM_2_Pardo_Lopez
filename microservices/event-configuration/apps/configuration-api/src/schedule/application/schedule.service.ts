@@ -4,7 +4,7 @@ import { DomainException } from '../../shared/errors/domain.exception';
 import { SERIALIZABLE_TRANSACTION, SerializableTransaction } from '../../shared/application/serializable-transaction.port';
 import { hasAccessibleContrast } from '../domain/color-contrast';
 import { validateScheduleCandidates } from '../domain/schedule-validation';
-import { ProgramPatch, ProgramWrite, SCHEDULE_REPOSITORY, ScheduleListQuery, ScheduleRepositoryPort, ScheduleValidationRequest, SessionWrite, VenuePatch, VenueWrite } from '../domain/ports/schedule-repository.port';
+import { CancelSessionInput, CompleteSessionInput, ProgramPatch, ProgramWrite, SCHEDULE_REPOSITORY, ScheduleListQuery, ScheduleRepositoryPort, ScheduleValidationRequest, SessionPatch, SessionWrite, VenuePatch, VenueWrite } from '../domain/ports/schedule-repository.port';
 import { ProgramEntity, SessionEntity, VenueEntity } from '../domain/models/schedule.entity';
 import { EVENT_SNAPSHOT_READER, EventSnapshotReader } from './ports/event-snapshot-reader.port';
 
@@ -334,6 +334,289 @@ export class ScheduleService {
       }
       throw error;
     }
+  }
+
+  async getSession(claims: TenantClaims, eventId: string, sessionId: string): Promise<SessionEntity> {
+    const event = await this.readConfigurableEvent(claims, eventId);
+    const session = await this.repository.findSessionWithSpeakers(
+      claims.organization_id,
+      eventId,
+      sessionId,
+      event.timezone,
+    );
+    if (!session) {
+      throw DomainException.notFound('Session was not found.', 'SESSION_NOT_FOUND');
+    }
+    return session;
+  }
+
+  async patchSession(
+    claims: TenantClaims,
+    eventId: string,
+    sessionId: string,
+    expectedSessionRevision: number,
+    dto: SessionPatch,
+    metadata: AuditMetadata,
+  ): Promise<SessionEntity> {
+    let conflictSession: SessionEntity | undefined;
+    let conflictSpeakerIds: string[] = [];
+    try {
+      return await this.databaseService.withSerializableTransaction(claims.organization_id, async () => {
+        const event = await this.readConfigurableEvent(claims, eventId);
+        const current = await this.repository.findSessionWithSpeakers(
+          claims.organization_id,
+          eventId,
+          sessionId,
+          event.timezone,
+        );
+        if (!current) {
+          throw DomainException.notFound('Session was not found.', 'SESSION_NOT_FOUND');
+        }
+        if (current.revision !== expectedSessionRevision) {
+          throw DomainException.preconditionFailed(
+            `Session revision mismatch: current revision is ${current.revision}, expected ${expectedSessionRevision}.`,
+          );
+        }
+        if (current.status === 'cancelled' || current.status === 'completed') {
+          throw DomainException.conflict(
+            'Cannot modify a cancelled or completed session.',
+            'session_terminal_state',
+          );
+        }
+
+        if (dto.title !== undefined) {
+          this.requireText(dto.title, 'title');
+        }
+
+        const programId = dto.program_id ?? current.program_id;
+        const venueId = dto.venue_id ?? current.venue_id;
+        const startsAtStr = dto.starts_at ?? current.starts_at;
+        const endsAtStr = dto.ends_at ?? current.ends_at;
+        const speakerIds = dto.speaker_ids ?? current.speaker_ids;
+
+        const startsAt = this.parseInstant(startsAtStr, 'starts_at');
+        const endsAt = this.parseInstant(endsAtStr, 'ends_at');
+        if (startsAt >= endsAt) {
+          throw DomainException.unprocessable('starts_at must be earlier than ends_at.');
+        }
+
+        const eventStartsAt = this.parseInstant(event.starts_at, 'event.starts_at');
+        const eventEndsAt = this.parseInstant(event.ends_at, 'event.ends_at');
+        if (startsAt < eventStartsAt || endsAt > eventEndsAt) {
+          throw DomainException.unprocessable(
+            'Session interval must be contained in the event window.',
+            [{ name: 'starts_at', reason: 'The session must fit within the event start and end instants.' }],
+            'event_window_violation',
+          );
+        }
+
+        await this.requireActiveReferences(claims.organization_id, eventId, programId, venueId);
+        const speakers = await this.repository.findActiveSpeakers(claims.organization_id, speakerIds);
+        if (speakers.length !== speakerIds.length) {
+          throw DomainException.notFound('One or more speakers were not found.', 'speaker_not_found');
+        }
+
+        const actor = this.auditContext(claims, metadata);
+
+        if (current.status === 'scheduled') {
+          const venue = await this.repository.findActiveVenue(claims.organization_id, venueId);
+          if (!venue) throw DomainException.notFound('Venue was not found.', 'VENUE_NOT_FOUND');
+
+          const validationContext = await this.repository.getValidationResources(
+            claims.organization_id,
+            eventId,
+            [programId],
+            [venueId],
+            speakerIds,
+          );
+
+          const domainResult = validateScheduleCandidates([{
+            venue_id: venueId,
+            speaker_ids: speakerIds,
+            starts_at: startsAtStr,
+            ends_at: endsAtStr,
+            program_valid: validationContext.programIds.has(programId),
+            venue_valid: validationContext.venues.has(venueId),
+            venue_exclusive: validationContext.venues.get(venueId) ?? false,
+            active_speakers: new Map(speakers.map((speaker) => [speaker.id, speaker.exclusive])),
+          }], validationContext.reservations.filter((reservation) => reservation.session_id !== current.id), event.starts_at, event.ends_at);
+
+          if (domainResult.errors.length) {
+            throw DomainException.unprocessable(
+              'Session does not pass schedule validation.',
+              domainResult.errors.map((reason) => ({ name: 'session', reason })),
+            );
+          }
+          if (domainResult.conflicts.length) {
+            throw new DomainException({
+              type: 'urn:problem:schedule-conflict',
+              title: 'Schedule Conflict',
+              status: 409,
+              detail: 'One or more exclusive resources are already reserved during this interval.',
+              code: 'schedule_conflict',
+              conflicts: domainResult.conflicts,
+            });
+          }
+
+          conflictSession = {
+            ...current,
+            venue_id: venueId,
+            starts_at: startsAtStr,
+            ends_at: endsAtStr,
+          };
+          conflictSpeakerIds = speakers.filter((speaker) => speaker.exclusive).map((speaker) => speaker.id);
+
+          await this.repository.releaseSessionReservations(claims.organization_id, eventId, sessionId);
+
+          const updated = await this.repository.updateSession(
+            claims.organization_id,
+            eventId,
+            sessionId,
+            expectedSessionRevision,
+            actor,
+            dto,
+            event.timezone,
+          );
+          if (!updated) {
+            throw DomainException.preconditionFailed('Session revision changed while updating.');
+          }
+
+          if (venue.exclusive) {
+            await this.repository.createVenueReservation(claims.organization_id, eventId, updated, actor);
+          }
+          await this.repository.reserveExclusiveSpeakers(
+            claims.organization_id,
+            eventId,
+            updated,
+            speakerIds,
+            speakers.filter((speaker) => speaker.exclusive).map((speaker) => speaker.id),
+            actor,
+          );
+          return updated;
+        }
+
+        const updated = await this.repository.updateSession(
+          claims.organization_id,
+          eventId,
+          sessionId,
+          expectedSessionRevision,
+          actor,
+          dto,
+          event.timezone,
+        );
+        if (!updated) {
+          throw DomainException.preconditionFailed('Session revision changed while updating.');
+        }
+        return updated;
+      });
+    } catch (error) {
+      const constraint = postgresExclusionConstraint(error);
+      if (constraint && conflictSession) {
+        throw new DomainException({
+          type: 'urn:problem:schedule-conflict',
+          title: 'Schedule Conflict',
+          status: 409,
+          detail: 'The exclusive venue is already reserved during this interval.',
+          code: 'schedule_conflict',
+          conflicts: constraint === 'ex_resource_reservations_speaker_range'
+            ? conflictSpeakerIds.map((speakerId) => ({
+              resource_type: 'speaker',
+              resource_id: speakerId,
+              starts_at: conflictSession!.starts_at,
+              ends_at: conflictSession!.ends_at,
+            }))
+            : [{
+              resource_type: 'venue',
+              resource_id: conflictSession.venue_id,
+              starts_at: conflictSession.starts_at,
+              ends_at: conflictSession.ends_at,
+            }],
+        });
+      }
+      throw error;
+    }
+  }
+
+  async cancelSession(
+    claims: TenantClaims,
+    eventId: string,
+    sessionId: string,
+    expectedSessionRevision: number,
+    dto: CancelSessionInput,
+    metadata: AuditMetadata,
+  ): Promise<SessionEntity> {
+    return this.databaseService.withSerializableTransaction(claims.organization_id, async () => {
+      const event = await this.readConfigurableEvent(claims, eventId);
+      const current = await this.repository.findSession(claims.organization_id, eventId, sessionId);
+      if (!current) {
+        throw DomainException.notFound('Session was not found.', 'SESSION_NOT_FOUND');
+      }
+      if (current.revision !== expectedSessionRevision) {
+        throw DomainException.preconditionFailed(
+          `Session revision mismatch: current revision is ${current.revision}, expected ${expectedSessionRevision}.`,
+        );
+      }
+      if (current.status === 'cancelled' || current.status === 'completed') {
+        throw DomainException.conflict('Session is already in a terminal state.', 'session_terminal_state');
+      }
+
+      this.requireText(dto.reason, 'reason');
+
+      const actor = this.auditContext(claims, metadata);
+      const cancelled = await this.repository.cancelSession(
+        claims.organization_id,
+        eventId,
+        sessionId,
+        expectedSessionRevision,
+        dto.reason.trim(),
+        actor,
+        event.timezone,
+      );
+      if (!cancelled) {
+        throw DomainException.preconditionFailed('Session revision changed while cancelling.');
+      }
+      return cancelled;
+    });
+  }
+
+  async completeSession(
+    claims: TenantClaims,
+    eventId: string,
+    sessionId: string,
+    expectedSessionRevision: number,
+    dto: CompleteSessionInput,
+    metadata: AuditMetadata,
+  ): Promise<SessionEntity> {
+    return this.databaseService.withSerializableTransaction(claims.organization_id, async () => {
+      const event = await this.readConfigurableEvent(claims, eventId);
+      const current = await this.repository.findSession(claims.organization_id, eventId, sessionId);
+      if (!current) {
+        throw DomainException.notFound('Session was not found.', 'SESSION_NOT_FOUND');
+      }
+      if (current.revision !== expectedSessionRevision) {
+        throw DomainException.preconditionFailed(
+          `Session revision mismatch: current revision is ${current.revision}, expected ${expectedSessionRevision}.`,
+        );
+      }
+      if (current.status !== 'scheduled') {
+        throw DomainException.conflict('Only scheduled sessions can be marked as completed.', 'invalid_state_transition');
+      }
+
+      const actor = this.auditContext(claims, metadata);
+      const completed = await this.repository.completeSession(
+        claims.organization_id,
+        eventId,
+        sessionId,
+        expectedSessionRevision,
+        dto.reason?.trim() ?? null,
+        actor,
+        event.timezone,
+      );
+      if (!completed) {
+        throw DomainException.preconditionFailed('Session revision changed while completing.');
+      }
+      return completed;
+    });
   }
 
   private async readConfigurableEvent(claims: TenantClaims, eventId: string, expectedRevision?: number) {

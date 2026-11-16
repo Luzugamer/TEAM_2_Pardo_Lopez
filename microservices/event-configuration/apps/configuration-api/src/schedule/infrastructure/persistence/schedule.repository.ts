@@ -7,7 +7,7 @@ import { computeSha256 } from '../../../shared/crypto/canonical-json';
 import { generateUuidV7 } from '../../../shared/crypto/uuidv7';
 import { decodeCursor, encodeCursor } from './schedule.pagination';
 import { ProgramEntity, SessionEntity, VenueEntity, VenueLocation } from '../../domain/models/schedule.entity';
-import { AuditContext, ListPage, ProgramPatch, ProgramWrite, ScheduleRepositoryPort, SessionWrite, VenuePatch, VenueWrite } from '../../domain/ports/schedule-repository.port';
+import { AuditContext, ListPage, ProgramPatch, ProgramWrite, ScheduleRepositoryPort, SessionPatch, SessionWrite, VenuePatch, VenueWrite } from '../../domain/ports/schedule-repository.port';
 
 @Injectable()
 export class ScheduleRepository implements ScheduleRepositoryPort {
@@ -455,6 +455,230 @@ export class ScheduleRepository implements ScheduleRepositoryPort {
         created_at: new Date(),
         created_by: actor.actorId,
       }).execute();
+    });
+  }
+
+  async findSessionWithSpeakers(
+    organizationId: string,
+    eventId: string,
+    sessionId: string,
+    timezone = 'UTC',
+  ): Promise<SessionEntity | null> {
+    return this.databaseService.withTenantTransaction(organizationId, async (db) => {
+      const row = await db.selectFrom('sessions').selectAll()
+        .where('organization_id', '=', organizationId)
+        .where('event_id', '=', eventId)
+        .where('id', '=', sessionId)
+        .executeTakeFirst();
+      if (!row) return null;
+      const entity = this.toSession(row, timezone);
+      const speakerRows = await db.selectFrom('session_speakers')
+        .select('speaker_id')
+        .where('organization_id', '=', organizationId)
+        .where('session_id', '=', sessionId)
+        .orderBy('display_order', 'asc')
+        .execute();
+      return {
+        ...entity,
+        speaker_ids: speakerRows.map((s) => s.speaker_id),
+      };
+    });
+  }
+
+  async releaseSessionReservations(organizationId: string, eventId: string, sessionId: string): Promise<void> {
+    await this.databaseService.withTenantTransaction(organizationId, async (db) => {
+      await db.updateTable('resource_reservations')
+        .set({ released_at: new Date() })
+        .where('organization_id', '=', organizationId)
+        .where('event_id', '=', eventId)
+        .where('session_id', '=', sessionId)
+        .where('released_at', 'is', null)
+        .execute();
+    });
+  }
+
+  async updateSession(
+    organizationId: string,
+    eventId: string,
+    sessionId: string,
+    expectedRevision: number,
+    actor: AuditContext,
+    patch: SessionPatch,
+    timezone = 'UTC',
+  ): Promise<SessionEntity | null> {
+    return this.databaseService.withTenantTransaction(organizationId, async (db) => {
+      const { speaker_ids: speakerIds, ...directFields } = patch;
+      const values: Record<string, unknown> = {};
+      if (directFields.program_id !== undefined) values.program_id = directFields.program_id;
+      if (directFields.venue_id !== undefined) values.venue_id = directFields.venue_id;
+      if (directFields.title !== undefined) values.title = directFields.title.trim();
+      if (directFields.description !== undefined) {
+        values.description = directFields.description ? directFields.description.trim() : null;
+      }
+      if (directFields.starts_at !== undefined) values.starts_at = new Date(directFields.starts_at);
+      if (directFields.ends_at !== undefined) values.ends_at = new Date(directFields.ends_at);
+
+      const row = await db.updateTable('sessions')
+        .set((eb) => ({
+          ...values,
+          revision: eb('revision', '+', 1),
+          updated_at: new Date(),
+          updated_by: actor.actorId,
+        }))
+        .where('organization_id', '=', organizationId)
+        .where('event_id', '=', eventId)
+        .where('id', '=', sessionId)
+        .where('revision', '=', expectedRevision)
+        .returningAll()
+        .executeTakeFirst();
+
+      if (!row) return null;
+
+      const entity = this.toSession(row, timezone);
+
+      if (speakerIds !== undefined) {
+        await db.deleteFrom('session_speakers')
+          .where('organization_id', '=', organizationId)
+          .where('session_id', '=', sessionId)
+          .execute();
+
+        if (speakerIds.length) {
+          await db.insertInto('session_speakers').values(speakerIds.map((speakerId, display_order) => ({
+            id: generateUuidV7(),
+            organization_id: organizationId,
+            event_id: eventId,
+            session_id: sessionId,
+            speaker_id: speakerId,
+            display_order,
+            created_at: new Date(),
+            created_by: actor.actorId,
+          }))).execute();
+        }
+      }
+
+      const activeSpeakers = (await db.selectFrom('session_speakers')
+        .select('speaker_id')
+        .where('organization_id', '=', organizationId)
+        .where('session_id', '=', sessionId)
+        .orderBy('display_order', 'asc')
+        .execute()).map((s) => s.speaker_id);
+
+      await this.insertAudit(db, organizationId, 'session', entity.id, 'updated', entity.revision, {
+        fields: Object.keys(patch),
+      }, actor);
+
+      return {
+        ...entity,
+        speaker_ids: activeSpeakers,
+      };
+    });
+  }
+
+  async cancelSession(
+    organizationId: string,
+    eventId: string,
+    sessionId: string,
+    expectedRevision: number,
+    reason: string,
+    actor: AuditContext,
+    timezone = 'UTC',
+  ): Promise<SessionEntity | null> {
+    return this.databaseService.withTenantTransaction(organizationId, async (db) => {
+      const row = await db.updateTable('sessions')
+        .set((eb) => ({
+          status: 'cancelled',
+          status_reason: reason,
+          revision: eb('revision', '+', 1),
+          updated_at: new Date(),
+          updated_by: actor.actorId,
+        }))
+        .where('organization_id', '=', organizationId)
+        .where('event_id', '=', eventId)
+        .where('id', '=', sessionId)
+        .where('status', 'in', ['draft', 'scheduled'])
+        .where('revision', '=', expectedRevision)
+        .returningAll()
+        .executeTakeFirst();
+
+      if (!row) return null;
+
+      await db.updateTable('resource_reservations')
+        .set({ released_at: new Date() })
+        .where('organization_id', '=', organizationId)
+        .where('session_id', '=', sessionId)
+        .where('released_at', 'is', null)
+        .execute();
+
+      const entity = this.toSession(row, timezone);
+      const speakerRows = await db.selectFrom('session_speakers')
+        .select('speaker_id')
+        .where('organization_id', '=', organizationId)
+        .where('session_id', '=', sessionId)
+        .orderBy('display_order', 'asc')
+        .execute();
+
+      await this.insertAudit(db, organizationId, 'session', entity.id, 'cancelled', entity.revision, {
+        status_reason: reason,
+      }, actor);
+
+      return {
+        ...entity,
+        speaker_ids: speakerRows.map((s) => s.speaker_id),
+      };
+    });
+  }
+
+  async completeSession(
+    organizationId: string,
+    eventId: string,
+    sessionId: string,
+    expectedRevision: number,
+    reason: string | null,
+    actor: AuditContext,
+    timezone = 'UTC',
+  ): Promise<SessionEntity | null> {
+    return this.databaseService.withTenantTransaction(organizationId, async (db) => {
+      const row = await db.updateTable('sessions')
+        .set((eb) => ({
+          status: 'completed',
+          status_reason: reason ?? null,
+          revision: eb('revision', '+', 1),
+          updated_at: new Date(),
+          updated_by: actor.actorId,
+        }))
+        .where('organization_id', '=', organizationId)
+        .where('event_id', '=', eventId)
+        .where('id', '=', sessionId)
+        .where('status', '=', 'scheduled')
+        .where('revision', '=', expectedRevision)
+        .returningAll()
+        .executeTakeFirst();
+
+      if (!row) return null;
+
+      await db.updateTable('resource_reservations')
+        .set({ released_at: new Date() })
+        .where('organization_id', '=', organizationId)
+        .where('session_id', '=', sessionId)
+        .where('released_at', 'is', null)
+        .execute();
+
+      const entity = this.toSession(row, timezone);
+      const speakerRows = await db.selectFrom('session_speakers')
+        .select('speaker_id')
+        .where('organization_id', '=', organizationId)
+        .where('session_id', '=', sessionId)
+        .orderBy('display_order', 'asc')
+        .execute();
+
+      await this.insertAudit(db, organizationId, 'session', entity.id, 'completed', entity.revision, {
+        status_reason: reason ?? null,
+      }, actor);
+
+      return {
+        ...entity,
+        speaker_ids: speakerRows.map((s) => s.speaker_id),
+      };
     });
   }
 

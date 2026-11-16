@@ -58,6 +58,24 @@ export interface SessionWrite {
   speaker_ids?: string[];
 }
 
+export interface SessionPatch {
+  program_id?: string;
+  venue_id?: string;
+  title?: string;
+  description?: string | null;
+  starts_at?: string;
+  ends_at?: string;
+  speaker_ids?: string[];
+}
+
+export interface CancelSessionInput {
+  reason: string;
+}
+
+export interface CompleteSessionInput {
+  reason?: string | null;
+}
+
 export interface ScheduleListQuery {
   limit: number;
   cursor?: string;
@@ -101,6 +119,11 @@ export interface ScheduleRepositoryPort {
   listSessions(organizationId: string, eventId: string, limit: number, cursor?: string, filters?: { program_id?: string; venue_id?: string; starts_after?: Date; ends_before?: Date }): Promise<ListPage<SessionEntity>>;
   createDraftSession(organizationId: string, eventId: string, actor: AuditContext, input: SessionWrite, timezone: string): Promise<SessionEntity>;
   findSession(organizationId: string, eventId: string, sessionId: string): Promise<SessionEntity | null>;
+  findSessionWithSpeakers(organizationId: string, eventId: string, sessionId: string, timezone?: string): Promise<SessionEntity | null>;
+  updateSession(organizationId: string, eventId: string, sessionId: string, expectedRevision: number, actor: AuditContext, input: SessionPatch, timezone?: string): Promise<SessionEntity | null>;
+  cancelSession(organizationId: string, eventId: string, sessionId: string, expectedRevision: number, reason: string, actor: AuditContext, timezone?: string): Promise<SessionEntity | null>;
+  completeSession(organizationId: string, eventId: string, sessionId: string, expectedRevision: number, reason: string | null, actor: AuditContext, timezone?: string): Promise<SessionEntity | null>;
+  releaseSessionReservations(organizationId: string, eventId: string, sessionId: string): Promise<void>;
   markSessionScheduled(organizationId: string, eventId: string, sessionId: string, expectedRevision: number, actor: AuditContext, timezone: string): Promise<SessionEntity | null>;
   listSessionSpeakerIds(organizationId: string, sessionIds: string[]): Promise<Map<string, string[]>>;
   reserveExclusiveSpeakers(organizationId: string, eventId: string, session: SessionEntity, speakerIds: string[], exclusiveIds: string[], actor: AuditContext): Promise<void>;

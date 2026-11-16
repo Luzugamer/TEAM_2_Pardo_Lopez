@@ -34,7 +34,7 @@ import { IdempotencyService, CachedResponse } from '../../shared/idempotency/ide
 import { ProblemDetailsException } from '../../shared/errors/problem-details.exception';
 import { ListQueryDto } from './dto/list-query.dto';
 import { ProgramWriteDto } from './dto/program-write.dto';
-import { ScheduleSessionDto, SessionWriteDto } from './dto/session-write.dto';
+import { CancelSessionDto, CompleteSessionDto, ScheduleSessionDto, SessionPatchDto, SessionWriteDto } from './dto/session-write.dto';
 import { VenueWriteDto } from './dto/venue-write.dto';
 import { VenuePatchDto, ProgramPatchDto } from './dto/resource-patch.dto';
 import { ScheduleValidationDto } from './dto/schedule-validation.dto';
@@ -236,6 +236,145 @@ export class ScheduleController {
         { eventId, sessionId, expectedSessionRevision, ...dto },
         async () => {
           const session = await this.scheduleService.scheduleSession(
+            claims,
+            eventId,
+            sessionId,
+            expectedSessionRevision,
+            dto,
+            this.requestMetadata(claims, request, key),
+          );
+          return this.cached(HttpStatus.OK, session, session.revision);
+        },
+        response,
+      );
+    } catch (error) {
+      this.translateKnownDatabaseError(error);
+    }
+  }
+
+  @Get('events/:eventId/sessions/:sessionId')
+  @RequireScopes('events:write', 'events:read')
+  @ApiOperation({ summary: 'Get session details by ID.' })
+  @ApiParam({ name: 'eventId', format: 'uuid' })
+  @ApiParam({ name: 'sessionId', format: 'uuid' })
+  @ApiResponse({ status: 200, description: 'Session details.' })
+  @ApiResponse({ status: 404, description: 'Session not found.' })
+  async getSession(
+    @Claims() claims: TenantClaims,
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const session = await this.scheduleService.getSession(claims, eventId, sessionId);
+    response.setHeader('ETag', `"${session.revision}"`);
+    return session;
+  }
+
+  @Patch('events/:eventId/sessions/:sessionId')
+  @ApiOperation({ summary: 'Update session fields with optimistic concurrency control.' })
+  @ApiParam({ name: 'eventId', format: 'uuid' })
+  @ApiParam({ name: 'sessionId', format: 'uuid' })
+  @ApiHeader({ name: 'If-Match', required: true })
+  @ApiResponse({ status: 200, description: 'Session updated.' })
+  @ApiResponse({ status: 412, description: 'Precondition failed (revision mismatch).' })
+  async patchSession(
+    @Claims() claims: TenantClaims,
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @Headers('if-match') ifMatch: string | undefined,
+    @Body() dto: SessionPatchDto,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const expectedRevision = this.parseIfMatch(ifMatch);
+    try {
+      const result = await this.scheduleService.patchSession(
+        claims,
+        eventId,
+        sessionId,
+        expectedRevision,
+        dto,
+        this.requestMetadata(claims, request, ''),
+      );
+      response.setHeader('ETag', `"${result.revision}"`);
+      return result;
+    } catch (error) {
+      this.translateKnownDatabaseError(error);
+    }
+  }
+
+  @Post('events/:eventId/sessions/:sessionId/cancellations')
+  @ApiOperation({ summary: 'Cancel a draft or scheduled session, releasing reservations.' })
+  @ApiParam({ name: 'eventId', format: 'uuid' })
+  @ApiParam({ name: 'sessionId', format: 'uuid' })
+  @ApiHeader({ name: 'If-Match', required: true })
+  @ApiHeader({ name: 'Idempotency-Key', required: true })
+  @ApiResponse({ status: 200, description: 'Session cancelled.' })
+  async cancelSession(
+    @Claims() claims: TenantClaims,
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @Headers('if-match') ifMatch: string | undefined,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() dto: CancelSessionDto,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const expectedSessionRevision = this.parseIfMatch(ifMatch);
+    const key = this.requireIdempotencyKey(idempotencyKey);
+    try {
+      await this.respondOnce(
+        claims,
+        key,
+        request,
+        'schedule.session.cancel',
+        { eventId, sessionId, expectedSessionRevision, ...dto },
+        async () => {
+          const session = await this.scheduleService.cancelSession(
+            claims,
+            eventId,
+            sessionId,
+            expectedSessionRevision,
+            dto,
+            this.requestMetadata(claims, request, key),
+          );
+          return this.cached(HttpStatus.OK, session, session.revision);
+        },
+        response,
+      );
+    } catch (error) {
+      this.translateKnownDatabaseError(error);
+    }
+  }
+
+  @Post('events/:eventId/sessions/:sessionId/completions')
+  @ApiOperation({ summary: 'Complete a scheduled session, releasing reservations.' })
+  @ApiParam({ name: 'eventId', format: 'uuid' })
+  @ApiParam({ name: 'sessionId', format: 'uuid' })
+  @ApiHeader({ name: 'If-Match', required: true })
+  @ApiHeader({ name: 'Idempotency-Key', required: true })
+  @ApiResponse({ status: 200, description: 'Session completed.' })
+  async completeSession(
+    @Claims() claims: TenantClaims,
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Param('sessionId', ParseUUIDPipe) sessionId: string,
+    @Headers('if-match') ifMatch: string | undefined,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() dto: CompleteSessionDto,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const expectedSessionRevision = this.parseIfMatch(ifMatch);
+    const key = this.requireIdempotencyKey(idempotencyKey);
+    try {
+      await this.respondOnce(
+        claims,
+        key,
+        request,
+        'schedule.session.complete',
+        { eventId, sessionId, expectedSessionRevision, ...dto },
+        async () => {
+          const session = await this.scheduleService.completeSession(
             claims,
             eventId,
             sessionId,
